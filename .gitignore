@@ -1,0 +1,27 @@
+# Python 虛擬環境
+venv/
+
+# SQLite 資料庫
+data/kline.sqlite
+
+# Jupyter Notebook cache
+__pycache__/
+*.pyc
+*.pyo
+*.ipynb_checkpoints/
+
+# 回測結果 (避免 Git 儲存大檔案)
+results/
+
+# VSCode 設定 (避免影響其他開發環境)
+.vscode/
+
+# 環境變數或敏感資訊 (如 API Key)
+.env
+*.env
+
+# Mac/Linux 系統檔案
+.DS_Store
+
+# Windows 系統檔案
+Thumbs.db
