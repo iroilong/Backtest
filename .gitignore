@@ -2,7 +2,7 @@
 venv/
 
 # SQLite 資料庫
-data/kline.sqlite
+*.sqlite
 
 # Jupyter Notebook cache
 __pycache__/
