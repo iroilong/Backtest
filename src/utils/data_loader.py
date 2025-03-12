@@ -371,7 +371,6 @@ if __name__ == "__main__":
     ]
 
     timeframes = ["1m", "5m", "15m", "1h", "4h", "1d"]
-    timeframes = ["1h", "4h", "1d"]
 
     for s in symbols:
         for t in timeframes:
