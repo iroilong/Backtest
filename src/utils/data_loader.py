@@ -346,40 +346,40 @@ if __name__ == "__main__":
     params = OHLCVIntervalParams(
         exchange_id="binance",
         symbol="BTC/USDT",
-        timeframe="1d",
-        start_date="2025-01-01",  # 這裡的日期會被忽略
-        end_date="2025-02-10",  # 這裡的日期會被忽略
+        timeframe="5m",
+        start_date="2025-03-01",  # 這裡的日期會被忽略
+        end_date="2025-03-12",  # 這裡的日期會被忽略
     )
 
     # 更新資料 (僅下載缺少區段)
     # update_exchange_data(params)
 
     # 如果 DB 已經存在且有資料，可以用此函數更新到最新資料
-    # update_exchange_uptodate(params)
+    update_exchange_uptodate(params)
 
     # 也可以用以下函數印出或匯出 DB 內的資料
     # print_db_data(params)
     # export_db_data(params, excel_path="kline_data.xlsx")
 
-    symbols = [
-        "BTC/USDT",
-        "ETH/USDT",
-        "XRP/USDT",
-        "SOL/USDT",
-        "ADA/USDT",
-        "DOGE/USDT",
-    ]
+    # symbols = [
+    #     "BTC/USDT",
+    #     "ETH/USDT",
+    #     "XRP/USDT",
+    #     "SOL/USDT",
+    #     "ADA/USDT",
+    #     "DOGE/USDT",
+    # ]
 
-    timeframes = ["1m", "5m", "15m", "1h", "4h", "1d"]
+    # timeframes = ["1m", "5m", "15m", "1h", "4h", "1d"]
 
-    for s in symbols:
-        for t in timeframes:
-            params = OHLCVIntervalParams(
-                exchange_id="binance",
-                symbol=s,
-                timeframe=t,
-                start_date="2000-01-01",
-                end_date="2025-03-11",
-            )
+    # for s in symbols:
+    #     for t in timeframes:
+    #         params = OHLCVIntervalParams(
+    #             exchange_id="binance",
+    #             symbol=s,
+    #             timeframe=t,
+    #             start_date="2000-01-01",
+    #             end_date="2025-03-11",
+    #         )
 
-            update_exchange_data(params)
+    #         update_exchange_data(params)

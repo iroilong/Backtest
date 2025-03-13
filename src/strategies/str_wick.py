@@ -21,10 +21,10 @@ class FixedAmountSizer(bt.Sizer):
 
 
 # ---------------------------------------------
-# Commission 設定：直接回傳 0
+# Commission 設定：根據成交價與成交量計算佣金，預設 taker 費率 0.04%，maker 0.02%
 class MakerTakerCommission(bt.CommInfoBase):
     def getcommission(self, size, price):
-        return 0
+        return 0  # 此處佣金計算將在 notify_order 裡處理
 
 
 # ---------------------------------------------
@@ -47,24 +47,29 @@ def load_data(db_path: str):
 # ---------------------------------------------
 # 策略：連續 N 根陰線達成後等待第一根陽線進場，下市價買入固定金額的 BTC，
 # 買入成交後，根據買入價格計算止盈（買入價*(1+tp_pct/100)）與止損（買入價*(1+sl_pct/100)）價格，
-# 每根 Bar 檢查是否有任何已開倉交易達到出場條件，若當前 Bar 的最高價 >= 止盈價格，
-# 或最低價 <= 止損價格，則以市價平倉賣出，並在成交日誌中標明是止盈還是止損。
-# 進場部分：只有當沒有持倉時才評估進場條件，出場後才會再次進場。
+# 每根 Bar 檢查是否有已開倉交易觸及出場條件，
+# 若當前 Bar 的最高價 >= 止盈價格，或最低價 <= 止損價格，則以市價平倉賣出，
+# 並在成交日誌中標明出場原因。進場部分僅在無持倉時執行（一買一賣模式）。
 class ConsecutiveBearishBuyMarketStrategy(bt.Strategy):
     params = (
         ("consecutive", 3),  # 連續陰線數
-        ("take_profit_pct", 3),  # 止盈百分比，例：3代表+3%
-        ("stop_loss_pct", -2),  # 止損百分比，例：-2代表-2%
+        ("take_profit_pct", 3),  # 止盈百分比，例如 3 表示 +3%
+        ("stop_loss_pct", -2),  # 止損百分比，例如 -2 表示 -2%
     )
 
     def __init__(self):
         self.streak_count = 0  # 累計符合條件的陰線數
         self.waiting = False  # 是否進入等待買單狀態
-        # 用來記錄每筆買入交易，格式：{'entry_price': ..., 'size': ...}
-        self.open_trades = []
+        self.open_trades = (
+            []
+        )  # 記錄每筆買入交易，格式：{'entry_price': ..., 'size': ...}
+        self.event_log = []  # 存放每次買賣成交事件的詳細資訊
+        self.buy_count = 0
+        self.sell_count = 0
+        self.total_commission = 0.0
 
     def next(self):
-        # 先檢查所有已開倉交易是否觸及出場條件（只在有持倉時才有效）
+        # 若有持倉，先檢查出場條件；有持倉時不評估進場條件
         if self.position:
             trades_to_exit = []
             for i, trade in enumerate(self.open_trades):
@@ -87,7 +92,6 @@ class ConsecutiveBearishBuyMarketStrategy(bt.Strategy):
                     exit_triggered = True
                     exit_reason = "止損"
                 if exit_triggered:
-                    # 以市價下單平倉，並在訂單 info 中傳入 exit_reason
                     self.sell(
                         exectype=bt.Order.Market,
                         size=trade["size"],
@@ -96,10 +100,9 @@ class ConsecutiveBearishBuyMarketStrategy(bt.Strategy):
                     trades_to_exit.append(i)
             for i in sorted(trades_to_exit, reverse=True):
                 del self.open_trades[i]
-            # 如果持有部位，則不再評估進場條件
             return
 
-        # 當無持倉時，評估進場條件
+        # 無持倉時，評估進場條件（連續陰線）
         if not self.waiting:
             if self.data.close[0] < self.data.open[0]:
                 if self.streak_count == 0:
@@ -126,7 +129,6 @@ class ConsecutiveBearishBuyMarketStrategy(bt.Strategy):
                     f"O={o:.2f}, H={h:.2f}, L={l:.2f}, C={c:.2f}, V={v}"
                 )
         else:
-            # 當等待狀態下，遇到第一根陽線（收盤 > 開盤）則送出市價買入單
             if self.data.close[0] > self.data.open[0]:
                 self.log("第一根陽線出現，送出市價買入單")
                 order = self.buy(exectype=bt.Order.Market)
@@ -135,28 +137,64 @@ class ConsecutiveBearishBuyMarketStrategy(bt.Strategy):
 
     def notify_order(self, order):
         if order.status == order.Completed:
+            # Commission 計算
+            trade_value = abs(order.executed.size * order.executed.price)
+            commrate = 0.0004  # 預設 taker 費率
+            if order.info.get("maker_or_taker", "taker") == "maker":
+                commrate = 0.0002
+            commission = trade_value * commrate
+            order.executed.comm = commission
+            self.total_commission += commission
+
+            timestamp = self.data.datetime.datetime(0).strftime("%Y-%m-%d %H:%M:%S")
             if order.isbuy():
+                self.buy_count += 1
                 entry_price = order.executed.price
                 size = order.executed.size
-                # 記錄該筆交易
                 self.open_trades.append({"entry_price": entry_price, "size": size})
                 remaining_cash = self.broker.getcash()
                 coin_qty = self.getposition(self.data).size
                 target = entry_price * (1 + self.p.take_profit_pct / 100.0)
                 stop = entry_price * (1 + self.p.stop_loss_pct / 100.0)
-                self.log(
-                    f"買入成交：價格={entry_price:.2f}, 數量={size:.5f} BTC, 剩餘資金={remaining_cash:.2f} USDT, "
-                    f"持倉量={coin_qty:.5f} BTC. 目標止盈價={target:.2f}, 目標止損價={stop:.2f}"
+                log_msg = (
+                    f"買入成交：價格={entry_price:.2f}, 數量={size:.5f} BTC, "
+                    f"剩餘資金={remaining_cash:.2f} USDT, 持倉量={coin_qty:.5f} BTC, "
+                    f"目標止盈價={target:.2f}, 目標止損價={stop:.2f}, 佣金={commission:.2f}"
+                )
+                self.log(log_msg)
+                self.event_log.append(
+                    {
+                        "time": timestamp,
+                        "event": "買入成交",
+                        "price": entry_price,
+                        "size": size,
+                        "remaining_cash": remaining_cash,
+                        "position": coin_qty,
+                        "details": f"目標止盈價={target:.2f}, 目標止損價={stop:.2f}, 佣金={commission:.2f}",
+                    }
                 )
             elif order.issell():
+                self.sell_count += 1
                 sell_price = order.executed.price
                 size = order.executed.size
                 remaining_cash = self.broker.getcash()
                 coin_qty = self.getposition(self.data).size
                 exit_reason = order.info.get("exit_reason", "未知")
-                self.log(
-                    f"賣出成交 ({exit_reason})：價格={sell_price:.2f}, 數量={size:.5f} BTC, 剩餘資金={remaining_cash:.2f} USDT, "
-                    f"持倉量={coin_qty:.5f} BTC."
+                log_msg = (
+                    f"賣出成交 ({exit_reason})：價格={sell_price:.2f}, 數量={size:.5f} BTC, "
+                    f"剩餘資金={remaining_cash:.2f} USDT, 持倉量={coin_qty:.5f} BTC, 佣金={commission:.2f}"
+                )
+                self.log(log_msg)
+                self.event_log.append(
+                    {
+                        "time": timestamp,
+                        "event": f"賣出成交 ({exit_reason})",
+                        "price": sell_price,
+                        "size": size,
+                        "remaining_cash": remaining_cash,
+                        "position": coin_qty,
+                        "details": f"佣金={commission:.2f}",
+                    }
                 )
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
             self.log("訂單取消/保證金不足/拒絕")
@@ -164,6 +202,11 @@ class ConsecutiveBearishBuyMarketStrategy(bt.Strategy):
     def log(self, txt, dt=None):
         dt = dt or self.data.datetime.datetime(0)
         print(f"{dt.strftime('%Y-%m-%d %H:%M:%S')} {txt}")
+
+    def stop(self):
+        self.log(
+            f"策略結束：買入次數={self.buy_count}, 賣出次數={self.sell_count}, 總佣金={self.total_commission:.2f}"
+        )
 
 
 # ---------------------------------------------
@@ -203,16 +246,49 @@ def run_backtest(
         f"Running backtest: init_cash={init_cash}, percent={percent}, consecutive={consecutive}, tp_pct={tp_pct}, sl_pct={sl_pct}"
     )
     start_time = time.time()
-    cerebro.run()
+    strategies = cerebro.run()
     elapsed = time.time() - start_time
     print(f"單次回測耗時: {elapsed:.2f} 秒")
 
+    strat = strategies[0]
     final_cash = cerebro.broker.getvalue()
     profit = final_cash - init_cash
     profit_rate = profit / init_cash * 100.0
     print(
         f"Final Cash: {final_cash:.2f}, Profit: {profit:.2f}, Profit Rate: {profit_rate:.2f}%"
     )
+
+    # 製作摘要報告，將所有指定資訊存入一個 DataFrame
+    summary = {
+        "backtest_start": backtest_start.strftime("%Y-%m-%d"),
+        "backtest_end": backtest_end.strftime("%Y-%m-%d"),
+        "init_cash": init_cash,
+        "percent": percent,
+        "consecutive": consecutive,
+        "tp_pct": tp_pct,
+        "sl_pct": sl_pct,
+        "final_cash": final_cash,
+        "profit": profit,
+        "profit_rate": profit_rate,
+        "elapsed": elapsed,
+        "buy_count": strat.buy_count,
+        "sell_count": strat.sell_count,
+        "total_commission": strat.total_commission,
+    }
+    df_summary = pd.DataFrame([summary])
+    df_events = pd.DataFrame(strat.event_log)
+
+    # 將摘要與事件記錄合併寫入同一個 CSV 報告，摘要在上，事件在下
+    results_dir = "results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+    report_path = os.path.join(results_dir, "backtest_single_result.csv")
+    with open(report_path, "w", newline="") as f:
+        f.write("==== 摘要 ====\n")
+        df_summary.to_csv(f, index=False)
+        f.write("\n==== 事件記錄 ====\n")
+        df_events.to_csv(f, index=False)
+    print(f"單次回測報告已存到 {report_path}")
 
     if plot:
         cerebro.plot()
@@ -229,12 +305,15 @@ def run_backtest(
         "profit": profit,
         "profit_rate": profit_rate,
         "elapsed": elapsed,
+        "buy_count": strat.buy_count,
+        "sell_count": strat.sell_count,
+        "total_commission": strat.total_commission,
     }
     return result
 
 
 # ---------------------------------------------
-# 多組參數回測函數：計算所有組合回測的總耗時
+# 多組參數回測函數：計算所有組合回測的總耗時，並記錄每筆測試的買賣次數與總佣金
 def run_backtest_multi(
     init_cashes,
     percents,
@@ -270,35 +349,42 @@ def run_backtest_multi(
                         results.append(result)
     total_elapsed = time.time() - total_start
     print(f"多組回測總耗時: {total_elapsed:.2f} 秒")
-    return pd.DataFrame(results)
+    df_results = pd.DataFrame(results)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    results_filename = f"backtest_multi_result_{timestamp}.csv"
+    df_results_sorted = df_results.sort_values(by="profit_rate", ascending=False)
+    results_path = os.path.join("results", results_filename)
+    df_results_sorted.to_csv(results_path, index=False)
+    print(f"多組回測結果已存到 {results_path}")
+    return df_results
 
 
 # ---------------------------------------------
 if __name__ == "__main__":
     # 測試參數設定
     backtest_start = pd.to_datetime("2025-03-01")
-    backtest_end = pd.to_datetime("2025-03-08 23:59:59")
+    backtest_end = pd.to_datetime("2025-03-13 23:59:59")
     db_path = os.path.join("data", "binance_BTC_USDT_5m.sqlite")
 
-    RUN_SINGLE = 1
-    if RUN_SINGLE:
-        # 資金 10000 USDT，每次下單固定 10%（即1000 USDT），連續陰線門檻 5 根，
+    SINGLE_1_MILTI_0 = 1
+    if SINGLE_1_MILTI_0:
+        # 單次回測測試：資金 10000 USDT，每次下單固定 10%（即1000 USDT），連續陰線門檻 5 根，
         # 止盈設 +3%，止損設 -3%
         result = run_backtest(
             10000,
-            20,
-            2,
+            100,
+            5,
             backtest_start,
             backtest_end,
             db_path,
             plot=True,
-            tp_pct=1,
-            sl_pct=-2,
+            tp_pct=3,
+            sl_pct=-1,
         )
         print(result)
     else:
         init_cashes = [10000]
-        percents = [20]
+        percents = [100]
         consecutives = [2, 3, 4, 5, 6, 7]
         tp_pct_list = [1, 2, 3, 4, 5]  # 止盈百分比選項
         sl_pct_list = [-1, -2, -3, -4, -5]  # 止損百分比選項
@@ -315,4 +401,3 @@ if __name__ == "__main__":
         print("\n多組回測結果:")
         results_df_sorted = results_df.sort_values(by="profit_rate")
         print(results_df_sorted)
-        results_df_sorted.to_csv("result/backtest_multi_results.csv", index=False)

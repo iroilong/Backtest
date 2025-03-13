@@ -209,7 +209,7 @@ if __name__ == "__main__":
     # 測試參數設定
     backtest_start = pd.to_datetime("2024-01-01")
     backtest_end = pd.to_datetime("2025-03-10 23:59:59")
-    db_path = os.path.join("data", "binance_BTC_USDT_1d.sqlite")
+    db_path = os.path.join("data", "binance_BTC_USDT_1h.sqlite")
 
     # 可測試的參數列表
     init_cashes = [10000]
@@ -225,7 +225,7 @@ if __name__ == "__main__":
         120,
     ]
 
-    RUN_SINGLE = 0
+    RUN_SINGLE = 1
     if RUN_SINGLE:
         # 若只想執行單次回測，可以呼叫 run_backtest() 並設定 plot=True
         result = run_backtest(
@@ -246,4 +246,4 @@ if __name__ == "__main__":
         results_df_sorted = results_df.sort_values(by="net_profit_rate")
         print("\n多組回測結果:")
         print(results_df_sorted)
-        results_df_sorted.to_csv("results/backtest_report.csv", index=False)
+        results_df_sorted.to_csv("backtest_report.csv", index=False)
