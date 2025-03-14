@@ -1,10 +1,11 @@
 from utils.data_loader import DataLoader
 from utils.kline_plotter import plot_candlestick_chart
 from backtest_engines.backtrader_engine import BacktraderEngine
-from strategies.sma_strategy import (
-    run_sma_backtest,
-    run_sma_backtest_multi,
+from strategies.bearish_reversal_strategy import (
+    run_bearish_reversal_backtest,
+    run_bearish_reversal_backtest_multi,
 )
+
 
 # 資料庫連線設定
 db_config = {
@@ -44,26 +45,36 @@ df = data_loader.load_data(
     start_time="2025-03-01 00:00:00",
     end_time="2025-03-20 15:59:59",
 )
-print(df.head())
+# print(df.head())
 
 # (若需要繪圖，取消以下註解)
 # plot_candlestick_chart(df_data, title=f"{symbol} {timeframe} Candlestick Chart")
 
 
 engine = BacktraderEngine()
-# result = run_sma_backtest(
+
+# 呼叫 bearish_reversal 策略單次回測
+result = run_bearish_reversal_backtest(
+    engine,
+    df,  # 載入的資料
+    init_cash=10000,
+    percent=90,
+    consecutive=3,  # bearish_reversal 策略所需參數：連續陰線門檻
+    tp_pct=3,  # 止盈百分比
+    sl_pct=-1,  # 止損百分比
+    plot=True,
+)
+print("回測結果：", result)
+
+# 多組參數回測示例 (使用 bearish_reversal 策略)
+# results_df = run_bearish_reversal_backtest_multi(
 #     engine,
-#     df_data,  # 載入的資料
-#     init_cash=10000,
-#     percent=50,
-#     short_period=5,
-#     long_period=20,
-#     plot=True,
+#     df,
+#     init_cashes=[10000],
+#     percents=[90],
+#     consecutives=[3, 4],
+#     tp_pct_list=[1, 3, 5],
+#     sl_pct_list=[-1, -3],
 # )
-# print("回測結果：", result)
-
-
-# 多組參數回測示例
-results_df = run_sma_backtest_multi(engine, df, [10000], [10], [5, 10], [20, 30])
-print("多組回測結果：")
-print(results_df)
+# print("多組回測結果：")
+# print(results_df.sort_values(by="profit_rate"))
