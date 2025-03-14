@@ -8,10 +8,10 @@ import os
 class DataLoader:
     def __init__(
         self,
-        db_config: dict,
+        ccxt_config: dict,
         local_db_dir: str = None,
         csv_dir: str = None,
-        ccxt_config: dict = None,
+        db_config: dict = None,
     ):
         """
         初始化 DataLoader 並建立資料庫連線
@@ -213,6 +213,43 @@ class DataLoader:
 
         return df
 
+    def save_data(self, df: pd.DataFrame, table_name: str, destination: str = "nas"):
+        """
+        儲存 DataFrame 至指定目的地，預設儲存至 NAS DB
+
+        destination:
+            "nas_db"    : 儲存到 NAS 上的 MariaDB
+            "local_db"  : 儲存到本地 SQLite 資料庫（每個表格存成一個 .sqlite 檔案）
+            "csv"       : 儲存到 CSV 檔案
+        對於 local_db 與 csv，請在初始化 DataLoader 時設定 local_db_dir 與 csv_dir
+        """
+        if destination == "nas_db":
+            try:
+                df.to_sql(table_name, con=self.engine, if_exists="replace", index=False)
+                print(f"資料已儲存到 NAS 資料表 {table_name}")
+            except Exception as e:
+                print(f"Error saving to NAS DB: {e}")
+        elif destination == "local_db":
+            try:
+                # 使用 _create_sqlite_engine 時傳入 table_name 以建立對應的 .sqlite 檔案
+                engine = self._create_sqlite_engine(table_name)
+                df.to_sql(table_name, con=engine, if_exists="replace", index=False)
+                print(f"資料已儲存到本地 SQLite 資料表 {table_name}")
+            except Exception as e:
+                print(f"Error saving to SQLite DB: {e}")
+        elif destination == "csv":
+            if not self.csv_dir:
+                raise ValueError("請設定 csv_dir 用於 CSV 儲存")
+            try:
+                os.makedirs(self.csv_dir, exist_ok=True)
+                file_path = os.path.join(self.csv_dir, f"{table_name}.csv")
+                df.to_csv(file_path, index=False)
+                print(f"資料已儲存到 CSV 檔案 {file_path}")
+            except Exception as e:
+                print(f"Error saving to CSV: {e}")
+        else:
+            print(f"未知的目的地: {destination}")
+
 
 # ---------------------------
 # 測試範例
@@ -227,7 +264,7 @@ if __name__ == "__main__":
     }
 
     # ccxt 參數（不包含日期）
-    ccxt_config = {"exchange_id": "binance", "symbol": "BTC/USDT", "timeframe": "1d"}
+    ccxt_config = {"exchange_id": "binance", "symbol": "BTC/USDT", "timeframe": "15m"}
 
     # 本地資料夾設定
     local_db_dir = "./data/sqlite_db"
@@ -235,23 +272,51 @@ if __name__ == "__main__":
 
     # 初始化 DataLoader，並傳入 db_config, local_db_dir, csv_dir 與 ccxt_config
     data_loader = DataLoader(
+        ccxt_config=ccxt_config,
         db_config=db_config,
         local_db_dir=local_db_dir,
         csv_dir=csv_dir,
-        ccxt_config=ccxt_config,
     )
 
     # 產生統一的表格名稱 (例如: binance_BTC_USDT_1m)
     table_name = DataLoader.generate_table_name(
         ccxt_config["exchange_id"], ccxt_config["symbol"], ccxt_config["timeframe"]
     )
-    print(f"表格名稱: {table_name}")
+    print(f"使用的資料表名稱: {table_name}")
 
     # 透過 load_data 下載資料 (destination 預設 "ccxt")，並指定時間區間
     df = data_loader.load_data(
         table_name,
         destination="ccxt",
         start_time="2025-03-03 00:00:00",
-        end_time="2025-03-05 23:59:59",
+        end_time="2025-03-05 15:59:59",
     )
     print(df.head())
+
+    # 分別從三個來源存入資料（測試用）
+    # data_loader.save_data(df, table_name, destination="nas_db")
+    # data_loader.save_data(df, table_name, destination="local_db")
+    # data_loader.save_data(df, table_name, destination="csv")
+
+    # 分別從三個來源載入資料（測試用）
+    df_nas = data_loader.load_data(
+        table_name,
+        destination="nas_db",
+        start_time="2025-03-04 00:00:00",
+        end_time="2025-03-05 15:59:59",
+    )
+    print(df_nas.head())
+    df_sqlite = data_loader.load_data(
+        table_name,
+        destination="local_db",
+        start_time="2025-03-05 00:00:00",
+        end_time="2025-03-05 15:59:59",
+    )
+    print(df_sqlite.head())
+    df_csv = data_loader.load_data(
+        table_name,
+        destination="csv",
+        start_time="2025-03-03 00:00:00",
+        end_time="2025-03-05 15:59:59",
+    )
+    print(df_csv.head())
