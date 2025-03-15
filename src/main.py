@@ -5,6 +5,10 @@ from strategies.bearish_reversal_strategy import (
     run_bearish_reversal_backtest,
     run_bearish_reversal_backtest_multi,
 )
+from strategies.sma_strategy import (
+    run_sma_backtest,
+    run_sma_backtest_multi,
+)
 import os
 import time
 
@@ -44,7 +48,7 @@ print(f"使用的資料表名稱: {table_name}")
 df = data_loader.load_data(
     table_name,
     destination="ccxt",
-    start_time="2025-03-01 00:00:00",
+    start_time="2025-03-05 00:00:00",
     end_time="2025-03-20 15:59:59",
 )
 # print(df.head())
