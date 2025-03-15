@@ -5,6 +5,8 @@ from strategies.bearish_reversal_strategy import (
     run_bearish_reversal_backtest,
     run_bearish_reversal_backtest_multi,
 )
+import os
+import time
 
 
 # 資料庫連線設定
@@ -17,7 +19,7 @@ db_config = {
 }
 
 # ccxt 參數（不包含日期）
-ccxt_config = {"exchange_id": "binance", "symbol": "BTC/USDT", "timeframe": "15m"}
+ccxt_config = {"exchange_id": "binance", "symbol": "BTC/USDT", "timeframe": "1m"}
 
 # 本地資料夾設定
 local_db_dir = "./data/sqlite_db"
@@ -47,34 +49,44 @@ df = data_loader.load_data(
 )
 # print(df.head())
 
-# (若需要繪圖，取消以下註解)
-# plot_candlestick_chart(df_data, title=f"{symbol} {timeframe} Candlestick Chart")
+# 繪k線圖
+# plot_candlestick_chart(
+#     df, title=f"{ccxt_config['symbol']} {ccxt_config['timeframe']} Candlestick Chart"
+# )
 
 
 engine = BacktraderEngine()
 
-# 呼叫 bearish_reversal 策略單次回測
-result = run_bearish_reversal_backtest(
-    engine,
-    df,  # 載入的資料
-    init_cash=10000,
-    percent=90,
-    consecutive=3,  # bearish_reversal 策略所需參數：連續陰線門檻
-    tp_pct=3,  # 止盈百分比
-    sl_pct=-1,  # 止損百分比
-    plot=True,
-)
-print("回測結果：", result)
 
-# 多組參數回測示例 (使用 bearish_reversal 策略)
-# results_df = run_bearish_reversal_backtest_multi(
-#     engine,
-#     df,
-#     init_cashes=[10000],
-#     percents=[90],
-#     consecutives=[3, 4],
-#     tp_pct_list=[1, 3, 5],
-#     sl_pct_list=[-1, -3],
-# )
-# print("多組回測結果：")
-# print(results_df.sort_values(by="profit_rate"))
+RUN_SINGLE = 1
+if RUN_SINGLE:
+    # 呼叫 bearish_reversal 策略單次回測
+    result = run_bearish_reversal_backtest(
+        engine,
+        df,  # 載入的資料
+        init_cash=10000,
+        percent=90,
+        consecutive=7,  # bearish_reversal 策略所需參數：連續陰線門檻
+        tp_pct=2,  # 止盈百分比
+        sl_pct=-1,  # 止損百分比
+        plot=True,
+    )
+    print("回測結果：", result)
+else:
+    # 多組參數回測示例 (使用 bearish_reversal 策略)
+    results_df = run_bearish_reversal_backtest_multi(
+        engine,
+        df,
+        init_cashes=[10000],
+        percents=[90],
+        consecutives=[2, 3, 4, 5, 6, 7],
+        tp_pct_list=[1, 2, 3, 4, 5, 6, 7],
+        sl_pct_list=[-1, -2, -3, -4, -5, -6, -7],
+    )
+    print("多組回測結果：")
+    results_df_sort = results_df.sort_values(by="profit_rate", ascending=False)
+    print(results_df_sort)
+    # save report
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    file_path = os.path.join("./results", f"{table_name}_report_{timestamp}.csv")
+    results_df_sort.to_csv(file_path, index=False)

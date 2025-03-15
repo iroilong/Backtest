@@ -213,8 +213,8 @@ def run_bearish_reversal_backtest_multi(
                         )
                         result.update(
                             {
-                                "init_cash": init_cash,
-                                "percent": percent,
+                                # "init_cash": init_cash,
+                                # "percent": percent,
                                 "consecutive": consecutive,
                                 "tp_pct": tp_pct,
                                 "sl_pct": sl_pct,

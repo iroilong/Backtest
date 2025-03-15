@@ -254,69 +254,138 @@ class DataLoader:
 # ---------------------------
 # 測試範例
 if __name__ == "__main__":
-    # 資料庫連線設定
-    db_config = {
-        "host": "iroilong.synology.me",
-        "port": 33067,
-        "user": "crypto",
-        "password": "Crypto888#",
-        "database": "crypto_db",
-    }
 
-    # ccxt 參數（不包含日期）
-    ccxt_config = {"exchange_id": "binance", "symbol": "BTC/USDT", "timeframe": "15m"}
+    def download_a_lot():
+        # 資料庫連線設定
+        db_config = {
+            "host": "iroilong.synology.me",
+            "port": 33067,
+            "user": "crypto",
+            "password": "Crypto888#",
+            "database": "crypto_db",
+        }
 
-    # 本地資料夾設定
-    local_db_dir = "./data/sqlite_db"
-    csv_dir = "./data/csv_data"
+        # 本地資料夾設定
+        local_db_dir = "./data/sqlite_db"
+        csv_dir = "./data/csv_data"
 
-    # 初始化 DataLoader，並傳入 db_config, local_db_dir, csv_dir 與 ccxt_config
-    data_loader = DataLoader(
-        ccxt_config=ccxt_config,
-        db_config=db_config,
-        local_db_dir=local_db_dir,
-        csv_dir=csv_dir,
-    )
+        crypto_pairs = [
+            "BTC/USDT",
+            "ADA/USDT",
+            "DOGE/USDT",
+            "ETH/USDT",
+            "SOL/USDT",
+            "XRP/USDT",
+        ]
+        timeframes = ["1m", "5m", "15m", "1h", "4h", "1d"]
+        print(type(timeframes))
+        print(crypto_pairs[0])
+        print(timeframes[5])
 
-    # 產生統一的表格名稱 (例如: binance_BTC_USDT_1m)
-    table_name = DataLoader.generate_table_name(
-        ccxt_config["exchange_id"], ccxt_config["symbol"], ccxt_config["timeframe"]
-    )
-    print(f"使用的資料表名稱: {table_name}")
+        for pair in crypto_pairs:
+            for tf in timeframes:
+                # ccxt 參數（不包含日期）
+                ccxt_config = {
+                    "exchange_id": "binance",
+                    "symbol": pair,
+                    "timeframe": tf,
+                }
 
-    # 透過 load_data 下載資料 (destination 預設 "ccxt")，並指定時間區間
-    df = data_loader.load_data(
-        table_name,
-        destination="ccxt",
-        start_time="2025-03-03 00:00:00",
-        end_time="2025-03-05 15:59:59",
-    )
-    print(df.head())
+                # 初始化 DataLoader，並傳入 db_config, local_db_dir, csv_dir 與 ccxt_config
+                data_loader = DataLoader(
+                    ccxt_config=ccxt_config,
+                    db_config=db_config,
+                    local_db_dir=local_db_dir,
+                    csv_dir=csv_dir,
+                )
+                # 產生統一的表格名稱 (例如: binance_BTC_USDT_1m)
+                table_name = DataLoader.generate_table_name(
+                    ccxt_config["exchange_id"],
+                    ccxt_config["symbol"],
+                    ccxt_config["timeframe"],
+                )
+                print(f"使用的資料表名稱: {table_name}")
 
-    # 分別從三個來源存入資料（測試用）
-    # data_loader.save_data(df, table_name, destination="nas_db")
-    # data_loader.save_data(df, table_name, destination="local_db")
-    # data_loader.save_data(df, table_name, destination="csv")
+                # 透過 load_data 下載資料 (destination 預設 "ccxt")，並指定時間區間
+                df = data_loader.load_data(
+                    table_name,
+                    destination="ccxt",
+                    start_time="2000-01-01 00:00:00",
+                    end_time="2025-04-05 15:59:59",
+                )
 
-    # 分別從三個來源載入資料（測試用）
-    df_nas = data_loader.load_data(
-        table_name,
-        destination="nas_db",
-        start_time="2025-03-04 00:00:00",
-        end_time="2025-03-05 15:59:59",
-    )
-    print(df_nas.head())
-    df_sqlite = data_loader.load_data(
-        table_name,
-        destination="local_db",
-        start_time="2025-03-05 00:00:00",
-        end_time="2025-03-05 15:59:59",
-    )
-    print(df_sqlite.head())
-    df_csv = data_loader.load_data(
-        table_name,
-        destination="csv",
-        start_time="2025-03-03 00:00:00",
-        end_time="2025-03-05 15:59:59",
-    )
-    print(df_csv.head())
+                data_loader.save_data(df, table_name, destination="nas_db")
+
+    ############### EXAMPLE Starts here ###################
+    RUN_EXAMPLE = True
+    if RUN_EXAMPLE:
+        # 資料庫連線設定
+        db_config = {
+            "host": "iroilong.synology.me",
+            "port": 33067,
+            "user": "crypto",
+            "password": "Crypto888#",
+            "database": "crypto_db",
+        }
+
+        # ccxt 參數（不包含日期）
+        ccxt_config = {
+            "exchange_id": "binance",
+            "symbol": "BTC/USDT",
+            "timeframe": "1m",
+        }
+
+        # 本地資料夾設定
+        local_db_dir = "./data/sqlite_db"
+        csv_dir = "./data/csv_data"
+
+        # 初始化 DataLoader，並傳入 db_config, local_db_dir, csv_dir 與 ccxt_config
+        data_loader = DataLoader(
+            ccxt_config=ccxt_config,
+            db_config=db_config,
+            local_db_dir=local_db_dir,
+            csv_dir=csv_dir,
+        )
+
+        # 產生統一的表格名稱 (例如: binance_BTC_USDT_1m)
+        table_name = DataLoader.generate_table_name(
+            ccxt_config["exchange_id"], ccxt_config["symbol"], ccxt_config["timeframe"]
+        )
+        print(f"使用的資料表名稱: {table_name}")
+
+        # 透過 load_data 下載資料 (destination 預設 "ccxt")，並指定時間區間
+        # df = data_loader.load_data(
+        #     table_name,
+        #     destination="ccxt",
+        #     start_time="2025-03-03 00:00:00",
+        #     end_time="2025-03-05 15:59:59",
+        # )
+        # print(df.head())
+
+        # 分別從三個來源存入資料（測試用）
+        # data_loader.save_data(df, table_name, destination="nas_db")
+        # data_loader.save_data(df, table_name, destination="local_db")
+        # data_loader.save_data(df, table_name, destination="csv")
+
+        # 分別從三個來源載入資料（測試用）
+        df_nas = data_loader.load_data(
+            table_name,
+            destination="nas_db",
+            start_time="2025-03-04 00:00:00",
+            end_time="2025-04-05 15:59:59",
+        )
+        print(df_nas.head())
+        # df_sqlite = data_loader.load_data(
+        #     table_name,
+        #     destination="local_db",
+        #     start_time="2025-03-05 00:00:00",
+        #     end_time="2025-03-05 15:59:59",
+        # )
+        # print(df_sqlite.head())
+        # df_csv = data_loader.load_data(
+        #     table_name,
+        #     destination="csv",
+        #     start_time="2025-03-03 00:00:00",
+        #     end_time="2025-03-05 15:59:59",
+        # )
+        # print(df_csv.head())
