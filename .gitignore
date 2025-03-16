@@ -3,6 +3,7 @@ venv/
 
 # SQLite 資料庫
 *.sqlite
+data/csv_data/
 
 # Jupyter Notebook cache
 __pycache__/

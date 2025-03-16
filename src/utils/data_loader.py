@@ -4,6 +4,20 @@ from sqlalchemy import create_engine
 import time
 import os
 
+# ---------------------------
+# 模組內部的常數設定
+# ---------------------------
+DEFAULT_DB_CONFIG = {
+    "host": "iroilong.synology.me",
+    "port": 33067,
+    "user": "crypto",
+    "password": "Crypto888#",
+    "database": "crypto_db",
+}
+
+DEFAULT_LOCAL_DB_DIR = "./data/sqlite_db"
+DEFAULT_CSV_DIR = "./data/csv_data"
+
 
 class DataLoader:
     """
@@ -14,27 +28,16 @@ class DataLoader:
       - local_db：從本地的 SQLite 資料庫讀取
       - csv：從 CSV 檔案讀取
 
-    使用者在初始化時可以傳入各種設定參數，例如：
-      - ccxt_config：包含 exchange_id、symbol、timeframe 等交易所參數
-      - db_config：包含 NAS 資料庫的連線參數
-      - local_db_dir：本地 SQLite 資料庫存放的資料夾路徑
-      - csv_dir：CSV 檔案儲存的資料夾路徑
+    本模組將 db_config、local_db_dir 與 csv_dir 定義為常數，
+    外部只需傳入交易所參數 exchange_config，如：
+        {"exchange_id": "binance", "symbol": "BTC/USDT", "timeframe": "1m"}
     """
 
-    def __init__(
-        self,
-        ccxt_config: dict,
-        local_db_dir: str = None,
-        csv_dir: str = None,
-        db_config: dict = None,
-    ):
-        # 儲存傳入的設定參數，這些參數後續用於建立連線或下載資料
-        self.ccxt_config = ccxt_config  # 例如：{"exchange_id": "binance", "symbol": "BTC/USDT", "timeframe": "1m"}
-        self.db_config = db_config  # 例如：{"host": "xxx", "port": 33067, "user": "crypto", "password": "Crypto888#", "database": "crypto_db"}
-        self.local_db_dir = (
-            local_db_dir  # 本地 SQLite 資料庫檔案存放目錄，如 "./data/sqlite_db"
-        )
-        self.csv_dir = csv_dir  # CSV 檔案存放目錄，如 "./data/csv_data"
+    def __init__(self):
+        # 使用模組常數初始化
+        self.db_config = DEFAULT_DB_CONFIG
+        self.local_db_dir = DEFAULT_LOCAL_DB_DIR
+        self.csv_dir = DEFAULT_CSV_DIR
 
         # 如果提供了 NAS DB 的設定，就建立 MariaDB 的引擎連線
         if self.db_config:
@@ -45,7 +48,6 @@ class DataLoader:
     def _create_nas_engine(self):
         """
         利用 SQLAlchemy 建立 NAS 資料庫的連線引擎 (MariaDB)
-        使用 db_config 中提供的連線資訊來組成連線字串。
         """
         connection_str = (
             f"mysql+pymysql://{self.db_config['user']}:{self.db_config['password']}"
@@ -57,78 +59,50 @@ class DataLoader:
     def _create_sqlite_engine(self, table_name: str):
         """
         建立本地 SQLite 資料庫的連線引擎，
-        檔案名稱會依據傳入的 table_name 命名為 {table_name}.sqlite，
-        並存放在 local_db_dir 目錄下。
-
-        Raises:
-            ValueError: 若 local_db_dir 未提供則拋出錯誤。
+        檔案名稱為 {table_name}.sqlite，並存放在 local_db_dir 目錄下。
         """
         if not self.local_db_dir:
             raise ValueError("請提供 local_db_dir 用於 SQLite 資料庫儲存")
-        os.makedirs(self.local_db_dir, exist_ok=True)  # 如果資料夾不存在，則建立之
+        os.makedirs(self.local_db_dir, exist_ok=True)
         file_path = os.path.join(self.local_db_dir, f"{table_name}.sqlite")
         connection_str = f"sqlite:///{file_path}"
         engine = create_engine(connection_str, echo=False)
         return engine
 
     @staticmethod
-    def generate_table_name(exchange_id: str, symbol: str, timeframe: str) -> str:
+    def generate_table_name(exchange_config: dict) -> str:
         """
-        根據交易所 (exchange_id)、交易對 (symbol) 與 K 線週期 (timeframe) 組合出統一的表格名稱。
-        例如：exchange_id = "binance", symbol = "BTC/USDT", timeframe = "1m"
-        則產生的表格名稱為： "binance_BTC_USDT_1m"
-
-        Args:
-            exchange_id (str): 交易所代號，例如 "binance"
-            symbol (str): 交易對，例如 "BTC/USDT"
-            timeframe (str): K 線週期，例如 "1m", "1d" 等
-
-        Returns:
-            str: 統一的表格名稱
+        根據 exchange_config 中的 exchange_id, symbol 與 timeframe 組合出統一的表格名稱，
+        例如 {"exchange_id": "binance", "symbol": "BTC/USDT", "timeframe": "1d"} 產生 "binance_BTC_USDT_1d"。
         """
-        return f"{exchange_id}_{symbol.replace('/', '_')}_{timeframe}"
+        return f"{exchange_config['exchange_id']}_{exchange_config['symbol'].replace('/', '_')}_{exchange_config['timeframe']}"
 
     def load_data(
         self,
-        table_name: str,
+        exchange_config: dict,
         destination: str = "ccxt",
         start_time: str = None,
         end_time: str = None,
         **kwargs,
     ) -> pd.DataFrame:
         """
-        載入歷史 K 線資料，支援以下資料來源：
-          - "ccxt": 直接從交易所 API 下載資料，需提供 start_time 與 end_time (格式："YYYY-MM-DD HH:MM:SS")
-          - "nas_db": 從 NAS 上的 MariaDB 載入資料
-          - "local_db": 從本地 SQLite 載入資料
-          - "csv": 從 CSV 檔案載入資料
-
-        參數說明：
-          table_name (str): 資料表名稱，通常由 generate_table_name() 產生。
-          destination (str): 資料來源選項，預設為 "ccxt"。
-          start_time (str): 起始時間 (格式："YYYY-MM-DD HH:MM:SS")，用於過濾資料。
-          end_time (str): 結束時間 (格式："YYYY-MM-DD HH:MM:SS")。
-
+        載入歷史 K 線資料。
+        參數:
+            exchange_config (dict): 包含 exchange_id, symbol, timeframe 的字典。
+            destination (str): 資料來源 ("ccxt", "nas_db", "local_db", "csv")
+            start_time (str): 起始時間 (格式："YYYY-MM-DD HH:MM:SS")
+            end_time (str): 結束時間 (格式："YYYY-MM-DD HH:MM:SS")
         Returns:
-            pd.DataFrame: 載入後的資料表，包含至少以下欄位：
-                - datetime, open, high, low, close, volume, symbol
-
-        Notes:
-            - 若使用 "ccxt" 下載資料，會依照傳入的 start_time 與 end_time 組成 ISO8601 格式，再下載資料。
-            - 為確保只取得指定區間內的資料，最後會再進行一次時間篩選。
+            pd.DataFrame: 包含欄位 datetime, open, high, low, close, volume, symbol
         """
-        t0 = time.time()  # 記錄開始時間
+        t0 = time.time()
+
+        # 利用 exchange_config 產生統一的表格名稱
+        table_name = DataLoader.generate_table_name(exchange_config)
 
         if destination == "ccxt":
-            # 若選擇從交易所下載，必須設定 ccxt_config 及 start_time 與 end_time
-            if self.ccxt_config is None:
-                raise ValueError("請先設定 ccxt_config")
-            exchange_id = self.ccxt_config.get("exchange_id")
-            symbol = self.ccxt_config.get("symbol")
-            timeframe = self.ccxt_config.get("timeframe")
-            if not all([exchange_id, symbol, timeframe]):
-                raise ValueError("ccxt_config 必須包含 exchange_id, symbol, timeframe")
-            if not start_time or not end_time:
+            # 從交易所下載資料，需指定 start_time 與 end_time
+            if start_time is None or end_time is None:
                 raise ValueError(
                     "使用 ccxt 時，必須指定 start_time 與 end_time (格式：YYYY-MM-DD HH:MM:SS)"
                 )
@@ -137,6 +111,13 @@ class DataLoader:
             end_iso = f"{end_time.replace(' ', 'T')}Z"
 
             # 建立交易所物件
+            exchange_id = exchange_config.get("exchange_id")
+            symbol = exchange_config.get("symbol")
+            timeframe = exchange_config.get("timeframe")
+            if not all([exchange_id, symbol, timeframe]):
+                raise ValueError(
+                    "exchange_config 必須包含 exchange_id, symbol, timeframe"
+                )
             exchange_class = getattr(ccxt, exchange_id)
             exchange = exchange_class({"enableRateLimit": True})
             start_ts = exchange.parse8601(start_iso)
@@ -145,7 +126,6 @@ class DataLoader:
             all_ohlcv = []
             since = start_ts
             limit = 1000
-            # 透過迴圈逐步下載 K 線資料
             while since < end_ts:
                 try:
                     ohlcv = exchange.fetch_ohlcv(
@@ -161,26 +141,21 @@ class DataLoader:
                 if last_timestamp == since:
                     break  # 防止無限迴圈
                 since = last_timestamp + 1
-                # 為了避免觸發 API 限速，每次下載後稍微暫停
                 time.sleep(exchange.rateLimit / 1000)
                 if since >= end_ts:
                     break
 
-            # 將下載的資料轉換成 pandas DataFrame，並設定欄位名稱
             df = pd.DataFrame(
                 all_ohlcv,
                 columns=["timestamp", "open", "high", "low", "close", "volume"],
             )
-            # 將 timestamp 轉換成 datetime 型態，格式為 "YYYY-MM-DD HH:MM:SS"
             df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms")
             df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
             df.drop(columns=["timestamp"], inplace=True)
             df["symbol"] = symbol
-            # 調整欄位順序
             df = df[["datetime", "open", "high", "low", "close", "volume", "symbol"]]
 
         elif destination == "nas_db":
-            # 從 NAS DB 載入資料
             engine = self.engine
             try:
                 conditions = []
@@ -199,7 +174,6 @@ class DataLoader:
                 return pd.DataFrame()
 
         elif destination == "local_db":
-            # 從本地 SQLite 資料庫載入資料
             engine = self._create_sqlite_engine(table_name)
             try:
                 conditions = []
@@ -218,7 +192,6 @@ class DataLoader:
                 return pd.DataFrame()
 
         elif destination == "csv":
-            # 從 CSV 檔案載入資料
             if not self.csv_dir:
                 raise ValueError("請設定 csv_dir 用於 CSV 讀取")
             try:
@@ -232,7 +205,6 @@ class DataLoader:
                     if end_time:
                         end_dt = pd.to_datetime(end_time)
                         df = df[df["datetime"] <= end_dt]
-                    # 轉回字串格式
                     df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
             except Exception as e:
                 print(f"Error loading from CSV: {e}")
@@ -242,24 +214,21 @@ class DataLoader:
             return pd.DataFrame()
 
         elapsed_time = time.time() - t0
-        print(f"load_data 耗費時間: {elapsed_time:.2f} 秒")
 
-        # 為確保只取得指定區間內的資料，最後再過濾一次時間
+        # 列印下載資訊，共 5 行
+        print(f"資料表名稱: {table_name}")
+        print(f"下載方式: {destination}")
+        print(f"資料起始時間: {start_time}")
+        print(f"資料終止時間: {end_time}")
+        print(f"下載資料花費時間: {elapsed_time:.2f} 秒")
+
         df = df[(df["datetime"] >= start_time) & (df["datetime"] <= end_time)]
-
         return df
 
     def save_data(self, df: pd.DataFrame, table_name: str, destination: str = "nas_db"):
         """
-        將 DataFrame 格式的資料儲存到指定的目的地，支援三種方式：
-          - "nas_db": 儲存到 NAS 上的 MariaDB (使用 SQLAlchemy engine)
-          - "local_db": 儲存到本地的 SQLite 資料庫，每個表格存成一個 .sqlite 檔案
-          - "csv": 儲存到 CSV 檔案
-
-        Args:
-            df (pd.DataFrame): 要儲存的資料表，格式需包含欄位：datetime, open, high, low, close, volume, symbol
-            table_name (str): 資料表名稱，通常由 generate_table_name() 產生
-            destination (str): 儲存目的地，預設 "nas_db"
+        將 DataFrame 格式的資料儲存到指定的目的地，
+        支援 "nas_db"、"local_db"、"csv" 三種方式。
         """
         if destination == "nas_db":
             try:
@@ -287,133 +256,104 @@ class DataLoader:
         else:
             print(f"未知的目的地: {destination}")
 
+    def update_nas_data(self, exchange_config: dict) -> None:
+        """
+        更新 NAS DB 中資料至目前時間（僅補齊最新的後續資料）。
+
+        流程：
+        1. 根據 exchange_config 產生資料表名稱。
+        2. 查詢 NAS DB 中該表格的最新 datetime 值，若無資料表或該表無任何資料，
+           則印出提示訊息，不進行資料下載。
+        3. 如果有資料，則將最新的 datetime 加 1 秒作為起始時間，並以目前時間作為結束時間，
+           呼叫 load_data() 下載該區間內的新資料。
+        4. 如果有新資料，則以 append 模式將新資料加入到 NAS DB 中的資料表。
+
+        參數：
+            exchange_config (dict): 包含 exchange_id, symbol, timeframe 的字典。
+            default_start_time (str): 若資料表不存在，提供預設的起始時間（格式："YYYY-MM-DD HH:MM:SS"）。
+                                       ※本方法要求若無資料表則不進行下載，因此此參數不再使用。
+        """
+        # 利用 exchange_config 產生統一的資料表名稱
+        table_name = DataLoader.generate_table_name(exchange_config)
+
+        # 準備 SQL 查詢語句，用以取得資料表中最新的 datetime
+        query = f"SELECT MAX(datetime) AS max_dt FROM {table_name}"
+
+        try:
+            # 執行 SQL 查詢
+            result = pd.read_sql_query(query, con=self.engine)
+        except Exception as e:
+            # 如果查詢失敗，通常代表資料表不存在
+            print(f"資料表 {table_name} 不存在，無法更新資料，請先建立資料表。")
+            return  # 結束更新動作
+
+        # 檢查查詢結果是否有資料，若資料表存在但沒有任何資料，則不進行更新
+        max_dt = result["max_dt"].iloc[0] if not result.empty else None
+        if max_dt is None or pd.isnull(max_dt):
+            print(f"資料表 {table_name} 中無任何資料，無法更新。")
+            return  # 結束更新動作
+
+        # 將資料庫中最新的時間加 1 秒，避免重複下載該筆資料
+        new_start_time = (pd.to_datetime(max_dt) + pd.Timedelta(seconds=1)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        # 以目前系統時間作為結束時間
+        now_time = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 如果最新時間已達到或超過目前時間，則表示資料已最新，不需要更新
+        if new_start_time >= now_time:
+            print("資料已更新到目前時間，無需更新。")
+            return
+
+        # 列印更新區間的提示資訊
+        print(
+            f"從 NAS DB 表格 {table_name} 最後資料時間 {max_dt} 更新到目前時間 {now_time}。"
+        )
+
+        # 利用 ccxt 下載新資料（此處使用 load_data，下載方式為 "ccxt"）
+        new_data = self.load_data(
+            exchange_config=exchange_config,
+            destination="ccxt",
+            start_time=new_start_time,
+            end_time=now_time,
+        )
+
+        # 如果下載的新資料為空，則直接列印訊息
+        if new_data.empty:
+            print("無新資料可更新。")
+            return
+
+        try:
+            # 將新資料以 append 模式新增到 NAS DB 中相應的資料表
+            new_data.to_sql(
+                table_name, con=self.engine, if_exists="append", index=False
+            )
+            print(f"已更新 {len(new_data)} 筆資料到 NAS DB 表格 {table_name}。")
+        except Exception as e:
+            print(f"更新 NAS DB 失敗：{e}")
+
 
 # -------------------------------------------------------------------
 # 測試範例
 if __name__ == "__main__":
-    # 以下為測試範例，用以示範如何使用 DataLoader 下載與儲存資料
-
-    # -------------------------
-    # 定義 NAS 資料庫連線設定 (MariaDB)
-    # -------------------------
-    db_config = {
-        "host": "iroilong.synology.me",
-        "port": 33067,
-        "user": "crypto",
-        "password": "Crypto888#",
-        "database": "crypto_db",
-    }
-
-    # -------------------------
-    # 定義 CCXT 參數 (下載資料時使用，不包含時間)
-    # -------------------------
-    ccxt_config = {
+    # 測試範例：僅需傳入交易所參數 exchange_config
+    exchange_config = {
         "exchange_id": "binance",
         "symbol": "BTC/USDT",
-        "timeframe": "1m",
+        "timeframe": "1d",
     }
+    # tablename = DataLoader.generate_table_name(exchange_config)
+    # print(f"使用的資料表名稱: {tablename}")
 
-    # -------------------------
-    # 定義本地資料夾：SQLite 資料庫與 CSV 檔案儲存目錄
-    # -------------------------
-    local_db_dir = "./data/sqlite_db"
-    csv_dir = "./data/csv_data"
+    data_loader = DataLoader()
 
-    # -------------------------
-    # 初始化 DataLoader：傳入 ccxt_config、db_config、local_db_dir 與 csv_dir
-    # -------------------------
-    data_loader = DataLoader(
-        ccxt_config=ccxt_config,
-        db_config=db_config,
-        local_db_dir=local_db_dir,
-        csv_dir=csv_dir,
-    )
+    # df = data_loader.load_data(
+    #     exchange_config=exchange_config,
+    #     destination="ccxt",
+    #     start_time="2025-03-03 00:00:00",
+    #     end_time="2025-03-08 15:59:59",
+    # )
+    # print(df.head())
 
-    # -------------------------
-    # 產生統一的表格名稱 (例如: binance_BTC_USDT_1m)
-    # -------------------------
-    table_name = DataLoader.generate_table_name(
-        ccxt_config["exchange_id"],
-        ccxt_config["symbol"],
-        ccxt_config["timeframe"],
-    )
-    print(f"使用的資料表名稱: {table_name}")
-
-    # -------------------------
-    # 使用 load_data 下載資料：這裡指定從 CCXT 下載，並指定時間區間
-    # -------------------------
-    df = data_loader.load_data(
-        table_name,
-        destination="ccxt",
-        start_time="2025-03-03 00:00:00",
-        end_time="2025-03-05 15:59:59",
-    )
-    print(df.head())
-
-    # -------------------------
-    # 將下載的資料存入 NAS DB (或可依需求存入 local_db 或 csv)
-    # -------------------------
-    # data_loader.save_data(df, table_name, destination="nas_db")
-
-    # ---------------------------
-    # 一次可以全下的範例
-    def download_a_lot():
-        # 資料庫連線設定
-        db_config = {
-            "host": "iroilong.synology.me",
-            "port": 33067,
-            "user": "crypto",
-            "password": "Crypto888#",
-            "database": "crypto_db",
-        }
-
-        # 本地資料夾設定
-        local_db_dir = "./data/sqlite_db"
-        csv_dir = "./data/csv_data"
-
-        crypto_pairs = [
-            "BTC/USDT",
-            "ADA/USDT",
-            "DOGE/USDT",
-            "ETH/USDT",
-            "SOL/USDT",
-            "XRP/USDT",
-        ]
-        timeframes = ["1m", "5m", "15m", "1h", "4h", "1d"]
-        print(type(timeframes))
-        print(crypto_pairs[0])
-        print(timeframes[5])
-
-        for pair in crypto_pairs:
-            for tf in timeframes:
-                # ccxt 參數（不包含日期）
-                ccxt_config = {
-                    "exchange_id": "binance",
-                    "symbol": pair,
-                    "timeframe": tf,
-                }
-
-                # 初始化 DataLoader，並傳入 db_config, local_db_dir, csv_dir 與 ccxt_config
-                data_loader = DataLoader(
-                    ccxt_config=ccxt_config,
-                    db_config=db_config,
-                    local_db_dir=local_db_dir,
-                    csv_dir=csv_dir,
-                )
-                # 產生統一的表格名稱 (例如: binance_BTC_USDT_1m)
-                table_name = DataLoader.generate_table_name(
-                    ccxt_config["exchange_id"],
-                    ccxt_config["symbol"],
-                    ccxt_config["timeframe"],
-                )
-                print(f"使用的資料表名稱: {table_name}")
-
-                # 透過 load_data 下載資料 (destination 預設 "ccxt")，並指定時間區間
-                df = data_loader.load_data(
-                    table_name,
-                    destination="ccxt",
-                    start_time="2000-01-01 00:00:00",
-                    end_time="2025-04-05 15:59:59",
-                )
-
-                data_loader.save_data(df, table_name, destination="nas_db")
+    # 測試更新 nas_db：更新資料至目前時間，如果表格無資料，請提供 default_start_time
+    data_loader.update_nas_data(exchange_config)

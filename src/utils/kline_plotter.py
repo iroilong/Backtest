@@ -1,5 +1,6 @@
 import pandas as pd
 import mplfinance as mpf
+from data_loader import DataLoader
 
 
 def plot_candlestick_chart(df: pd.DataFrame, title: str = "Candlestick Chart"):
@@ -16,3 +17,23 @@ def plot_candlestick_chart(df: pd.DataFrame, title: str = "Candlestick Chart"):
 
     # 使用 mplfinance 畫圖，這裡同時顯示成交量
     mpf.plot(df, type="candle", volume=True, title=title)
+
+
+# 使用範例
+if __name__ == "__main__":
+    # 傳入交易所參數 exchange_config
+
+    data_loader = DataLoader()
+
+    df = data_loader.load_data(
+        exchange_config={
+            "exchange_id": "binance",
+            "symbol": "BTC/USDT",
+            "timeframe": "1m",
+        },
+        destination="ccxt",
+        start_time="2025-03-03 00:00:00",
+        end_time="2025-03-08 15:59:59",
+    )
+
+    plot_candlestick_chart(df)

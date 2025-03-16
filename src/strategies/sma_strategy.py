@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import backtrader as bt
+import time
 
 
 # ------------------------------------------------------------------------------
@@ -156,7 +157,7 @@ class SMAStrategy(bt.Strategy):
           - short_period: 短期 SMA 週期
           - long_period: 長期 SMA 週期
 
-        最終 profit 可由回測引擎計算：
+        最終 profit 可由回測計算：
           profit = final_value - initial_capital
         (因為手續費已隨交易從現金中扣除)
         """
@@ -170,54 +171,91 @@ class SMAStrategy(bt.Strategy):
 
 
 # ------------------------------------------------------------------------------
-# 單次 SMA 策略回測函數
+# 單次 SMA 策略回測函數（不依賴外部 engine）
 # ------------------------------------------------------------------------------
-def run_sma_backtest(
-    engine, data, init_cash, percent, short_period, long_period, plot=True
-):
+def run_sma_backtest(data, init_cash, percent, short_period, long_period, plot=True):
     """
-    執行單次 SMA 策略回測。
+    執行單次 SMA 策略回測，不依賴 engine 檔案，
+    直接利用 Backtrader 完成回測流程。
 
     Args:
-        engine: 回測引擎實例 (例如使用 BacktraderEngine)
         data: pandas DataFrame 格式的歷史 K 線資料，必須包含欄位：
               datetime, open, high, low, close, volume, symbol
         init_cash (float): 初始資金 (例如 10000 USDT)
-        percent (float): 每次下單時用於買入的現金比例 (0~100)，例如 50 表示 50%
+        percent (float): 每次下單時用於買入的現金比例 (0~100)
         short_period (int): 短期 SMA 的週期 (例如 5)
         long_period (int): 長期 SMA 的週期 (例如 20)
         plot (bool): 是否在回測後繪製圖表 (預設 True)
 
     Returns:
         dict: 回測結果，包括最終資金、獲利率、買賣次數、累計手續費及策略參數等資訊。
-              注意：profit = final_value - initial_capital，因為手續費已從現金中扣除。
+              (profit = final_value - initial_capital)
     """
-    result = engine.run_strategy(
-        strategy=SMAStrategy,
-        data=data,
-        initial_capital=init_cash,
-        commission=0.0,
-        short_period=short_period,
-        long_period=long_period,
-        plot=plot,
-        sizer=FractionalSizer,
-        sizer_params={"percents": percent},
-    )
+    t0 = time.time()
+    cerebro = bt.Cerebro()
+
+    # 設定 Broker 參數
+    cerebro.broker.setcash(init_cash)
+    # 此處 commission 設為 0，因策略中自行計算手續費
+    cerebro.broker.setcommission(commission=0.0)
+
+    # 加入下單數量設定：FractionalSizer
+    cerebro.addsizer(FractionalSizer, percents=percent)
+
+    # 加入策略
+    cerebro.addstrategy(SMAStrategy, short_period=short_period, long_period=long_period)
+
+    # 處理資料：確保有 datetime 欄位，並轉換成 datetime 格式及設為 index
+    if "datetime" not in data.columns:
+        if data.index.name == "datetime":
+            data = data.reset_index()
+        else:
+            raise KeyError("資料中必須包含 'datetime' 欄位或索引名稱為 'datetime'")
+    if not pd.api.types.is_datetime64_any_dtype(data["datetime"]):
+        data["datetime"] = pd.to_datetime(data["datetime"])
+    data.set_index("datetime", inplace=True)
+
+    datafeed = bt.feeds.PandasData(dataname=data)
+    cerebro.adddata(datafeed)
+
+    cerebro_run = cerebro.run()
+    elapsed = time.time() - t0
+
+    if plot:
+        cerebro.plot()
+
+    final_value = cerebro.broker.getvalue()
+    profit = final_value - init_cash
+    profit_rate = (profit / init_cash) * 100.0
+
+    # 取得策略實例並獲取自訂結果
+    strat_instance = cerebro_run[0]
+    custom_result = {}
+    if hasattr(strat_instance, "get_result") and callable(strat_instance.get_result):
+        custom_result = strat_instance.get_result()
+
+    result = {
+        "backtest_start_date": data.index.min().strftime("%Y-%m-%d %H:%M:%S"),
+        "backtest_end_date": data.index.max().strftime("%Y-%m-%d %H:%M:%S"),
+        "starting_cash": init_cash,
+        "final_value": final_value,
+        "profit": profit,
+        "profit_rate": profit_rate,
+        "elapsed": elapsed,
+    }
+    result.update(custom_result)
     return result
 
 
 # ------------------------------------------------------------------------------
 # 多組 SMA 策略回測函數
 # ------------------------------------------------------------------------------
-def run_sma_backtest_multi(
-    engine, data, init_cashes, percents, short_periods, long_periods
-):
+def run_sma_backtest_multi(data, init_cashes, percents, short_periods, long_periods):
     """
     執行多組參數組合的 SMA 策略回測，
     方便批次測試不同初始資金、下單比例以及均線週期的組合。
 
     Args:
-        engine: 回測引擎實例
         data: pandas DataFrame 格式的歷史資料
         init_cashes (list[float]): 初始資金列表 (例如 [10000, 20000])
         percents (list[float]): 每次下單現金比例列表 (例如 [50, 100])
@@ -225,7 +263,8 @@ def run_sma_backtest_multi(
         long_periods (list[int]): 長期 SMA 週期列表 (例如 [20, 30])
 
     Returns:
-        pandas.DataFrame: 每次回測結果彙整成的表格，其中包含最終資金、獲利率、買賣次數、累計手續費及使用的策略參數。
+        pandas.DataFrame: 每次回測結果彙整成的表格，
+                          包含最終資金、獲利率、買賣次數、累計手續費及使用的策略參數。
     """
     results = []
     for init_cash in init_cashes:
@@ -236,13 +275,7 @@ def run_sma_backtest_multi(
                     if short_period >= long_period:
                         continue
                     result = run_sma_backtest(
-                        engine,
-                        data,
-                        init_cash,
-                        percent,
-                        short_period,
-                        long_period,
-                        plot=False,
+                        data, init_cash, percent, short_period, long_period, plot=False
                     )
                     result["percent"] = percent
                     result["short_period"] = short_period
