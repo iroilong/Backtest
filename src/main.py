@@ -84,8 +84,8 @@ def save_report(dir: str, filename: str, df: pd.DataFrame):
 # 設定交易所參數 exchange_config
 exchange_config = {
     "exchange_id": "binance",
-    "symbol": "BTC/USDT",
-    "timeframe": "1m",
+    "symbol": "DOGE/USDT",
+    "timeframe": "1h",
 }
 # 透過 DataLoader 的 generate_table_name 方法產生統一的表格名稱
 tablename = DataLoader.generate_table_name(exchange_config)
@@ -95,11 +95,13 @@ print(f"使用的資料表名稱: {tablename}")
 data_loader = DataLoader()
 
 # 下載歷史 K 線資料，指定資料來源、起始與結束時間
+start_time = "2024-10-01 00:00:00"
+end_time = "2025-04-14 23:59:59"
 df = data_loader.load_data(
     exchange_config=exchange_config,
     destination="ccxt",
-    start_time="2025-03-01 00:00:00",
-    end_time="2025-03-14 23:59:59",
+    start_time=start_time,
+    end_time=end_time,
 )
 
 # 由於下載下來的資料中 "datetime" 欄位通常為字串，
@@ -121,39 +123,41 @@ else:
 # -------------------------------------------------------------------
 
 # 呼叫 run_strategy 執行單次回測，並選擇是否繪製圖表
-# run_strategy(
-#     df,
-#     init_captital=10000,
-#     short_period=20,
-#     long_period=60,
-#     buy_pct=1,
-#     plot=True,
-# )
+if 0:
+    run_strategy(
+        df,
+        init_captital=10000,
+        short_period=5,
+        long_period=240,
+        buy_pct=0.8,
+        plot=True,
+    )
 
 
 # 以下示範批次回測：遍歷不同的短期與長期 SMA 參數組合
-shorts = [5]  # , 10, 20, 60]
-longs = [60, 120]  # , 240]
+if 1:
+    shorts = [5, 10, 20, 60]
+    longs = [60, 120, 240]
 
-results = []
-for short in shorts:
-    for long in longs:
-        if short < long:
-            result = run_strategy(
-                df,
-                init_captital=10000,
-                short_period=short,
-                long_period=long,
-                buy_pct=1,
-                plot=False,
-            )
-            results.append(result)  # 將每次回測結果存入列表中
+    results = []
+    for short in shorts:
+        for long in longs:
+            if short < long:
+                result = run_strategy(
+                    df,
+                    init_captital=10000,
+                    short_period=short,
+                    long_period=long,
+                    buy_pct=0.8,
+                    plot=False,
+                )
+                results.append(result)  # 將每次回測結果存入列表中
 
-# 將結果列表轉換為 DataFrame
-df_result = pd.DataFrame(results)
+    # 將結果列表轉換為 DataFrame
+    df_result = pd.DataFrame(results)
 
-# 以 profit_rate 由大到小排序結果
-df_result_sorted = df_result.sort_values(by="profit_rate", ascending=False)
+    # 以 profit_rate 由大到小排序結果
+    df_result_sorted = df_result.sort_values(by="profit_rate", ascending=False)
 
-print(df_result_sorted)
-save_report("results", tablename, df_result_sorted)
+    print(df_result_sorted)
+    save_report("results", tablename, df_result_sorted)

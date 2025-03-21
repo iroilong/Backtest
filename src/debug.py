@@ -1,28 +1,30 @@
-import asyncio
-import websockets
-import json
+# import asyncio
+# import websockets
+# import json
+# import time
 
 
-async def subscribe_ticker():
-    uri = "wss://ws.okx.com:8443/ws/v5/public"
-    async with websockets.connect(uri) as websocket:
-        # 訂閱 BTC/USDT 的 ticker 資料
-        subscription_msg = {
-            "op": "subscribe",
-            "args": [{"channel": "tickers", "instId": "BTC-USDT"}],
-        }
-        await websocket.send(json.dumps(subscription_msg))
-        print("訂閱訊息已發送，等待數據...")
+# async def subscribe_ticker():
+#     uri = "wss://ws.okx.com:8443/ws/v5/public"
+#     async with websockets.connect(uri) as websocket:
+#         # 訂閱 BTC/USDT 的 ticker 資料
+#         subscription_msg = {
+#             "op": "subscribe",
+#             "args": [{"channel": "tickers", "instId": "BTC-USDT"}],
+#         }
+#         await websocket.send(json.dumps(subscription_msg))
+#         print("訂閱訊息已發送，等待數據...")
 
-        # 持續接收並顯示來自 OKX 的數據
-        while True:
-            response = await websocket.recv()
-            print(response)
+#         # 持續接收並顯示來自 OKX 的數據
+#         while True:
+#             response = await websocket.recv()
+#             print(response)
+#             time.sleep(5)
 
 
-asyncio.get_event_loop().run_until_complete(subscribe_ticker())
+# asyncio.get_event_loop().run_until_complete(subscribe_ticker())
 
-exit()
+# exit()
 
 
 ################### API ####################
@@ -39,6 +41,7 @@ password = "Okx7513#"
 
 import ccxt
 import pandas as pd
+import time
 
 # 設定OKX沙盒環境
 exchange = ccxt.okx(
@@ -71,13 +74,15 @@ df = pd.DataFrame(assets)
 print(df)
 symbol = "BTC/USDT"
 
-# 取得當前市場價格資訊
-ticker = exchange.fetch_ticker(symbol)
+# for i in range(10):
+#     # 取得當前市場價格資訊
+#     ticker = exchange.fetch_ticker(symbol)
 
-# 輸出當前價格（last 為最近成交價格）
-print("BTC 當前市價：", ticker["last"])
+#     # 輸出當前價格（last 為最近成交價格）
+#     print("BTC 當前市價：", ticker["last"])
+#     time.sleep(1)
 
-exit()
+# exit()
 
 
 try:
