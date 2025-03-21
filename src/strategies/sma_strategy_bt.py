@@ -1,16 +1,49 @@
+"""
+檔案名稱: sma_strategy_bt.py
+
+說明:
+  此程式為一個策略回測程式，同時也具備主程式功能，可以直接執行進行回測。
+  程式流程如下：
+    1. 利用 DataLoader 從指定資料來源（例如透過 CCXT）下載歷史 K 線資料，
+       並將資料轉換成適合 Backtrader 使用的格式（將 "datetime" 欄位轉換為 datetime 型態並設為索引）。
+    2. 建立 Backtrader 的資料 Feed 與策略 (SmaCoreStrategy)，並依照設定的參數執行回測。
+    3. 回測完成後，透過策略物件提供的 get_result 方法取得績效報告，
+       亦可選擇繪製圖表或儲存回測報告。
+
+使用方法:
+  1. 確認已安裝所需第三方套件（例如 backtrader, pandas, okx-api 等），
+     並且確保同一目錄下有 sma_core 模組及 utils/data_loader.py（用於下載歷史資料）。
+  2. 根據需求修改參數設定：
+       - exchange_config、start_time 與 end_time 決定歷史資料來源與區間。
+       - 回測參數包括 init_capital（初始資金）、short_period、long_period、buy_pct 等。
+  3. 執行本程式：
+         python sma_strategy_bt.py
+  4. 程式執行後將會進行單次或批次回測（可依 __main__ 區塊中設定切換），
+     並輸出回測結果與報告檔案（CSV 格式）。
+
+注意事項:
+  - 此程式僅供策略回測與測試使用，回測結果僅供參考，勿直接應用於正式交易。
+  - 請確認歷史資料的正確性與完整性，並根據回測需求調整策略參數。
+  - 若使用批次回測，回測完成後會將結果依 profit_rate 由大到小排序並儲存報告至指定資料夾。
+
+版本: 1.0
+建立日期: 2025-03-21
+作者: [你的名字或團隊名稱]
+"""
+
 import backtrader as bt
-from strategies.sma_core import SmaCore  # 引入核心 SMA 計算邏輯
+from sma_core import SmaCore  # 引入核心 SMA 計算邏輯
 import pandas as pd
 import logging
 import os
 import time
 
+# -----------------------
 # 設定 logger
+# -----------------------
 logger = logging.getLogger("SmaCoreStrategyLogger")
 logger.setLevel(logging.DEBUG)
-# 若尚未有 handler，則加入 FileHandler
 if not logger.handlers:
-    # 設定 log 檔案名稱，可根據需要調整路徑
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     log_filename = f"results/sma_strategy_bt_{timestamp}.log"
     fh = logging.FileHandler(log_filename, mode="a", encoding="utf-8")
@@ -51,7 +84,7 @@ class SmaCoreStrategy(bt.Strategy):
         self.sell_count = 0
         self.total_fee_usdt = 0.0
 
-        # 在圖表上加入短期與長期 SMA 指標線，便於觀察
+        # 加入短期與長期 SMA 指標線
         self.sma_short_indicator = bt.indicators.SimpleMovingAverage(
             self.data.close, period=self.p.short_period, plotname="SMA Short"
         )
@@ -62,13 +95,12 @@ class SmaCoreStrategy(bt.Strategy):
     def next(self):
         """
         每根新的 K 線到來時呼叫：
-          1. 印出該根 K 線的 OHLCV 資料（僅寫入 log 檔，不印出至終端）。
-          2. 取得當前收盤價，並用核心 SMA 模組更新價格，獲得交易訊號 ("buy" 或 "sell")。
-          3. 根據訊號與條件判斷是否下單：
+          1. 寫入該根 K 線的 OHLCV 資料至 log。
+          2. 取得當前收盤價，並利用核心 SMA 模組更新價格，獲得交易訊號 ("buy" 或 "sell")。
+          3. 根據訊號判斷是否下單：
              - 買入：需空倉且現金足夠（至少有初始資金 * buy_pct）。
              - 賣出：需持有部位。
         """
-        # 組合當前 K 線 OHLCV 資料字串
         ohlcv_str = (
             f"OHLCV => Open: {self.data.open[0]:.2f}, "
             f"High: {self.data.high[0]:.2f}, "
@@ -76,7 +108,6 @@ class SmaCoreStrategy(bt.Strategy):
             f"Close: {self.data.close[0]:.2f}, "
             f"Volume: {self.data.volume[0]}"
         )
-        # 將 OHLCV 資料寫入 log 檔，但不在終端機印出
         self.log(ohlcv_str, to_print=False)
 
         current_price = self.data.close[0]
@@ -115,9 +146,10 @@ class SmaCoreStrategy(bt.Strategy):
 
     def notify_order(self, order):
         """
-        當訂單狀態改變時呼叫，計算手續費並更新統計數據：
-          - 若訂單成交，根據買入/賣出分別計算手續費並更新累計數據。
-          - 若訂單取消或失敗，則記錄相應訊息。
+        當訂單狀態改變時呼叫：
+        - 若訂單成交，計算手續費、更新統計數據，
+            並印出目前總資產及與初始資金的變化。
+        - 若訂單取消或失敗，則記錄相應訊息。
         """
         if order.status in [order.Completed]:
             if order.isbuy():
@@ -137,18 +169,30 @@ class SmaCoreStrategy(bt.Strategy):
                     f"Sell executed: size={order.executed.size:.6f} at price {order.executed.price:.2f}, trade value={trade_value:.2f} USDT, fee={fee_usdt:.2f} USDT"
                 )
             self.order = None
+
+            # 印出目前總資產 (現金+持倉換算成 USDT)
+            total_assets = self.broker.getvalue()
+            self.log(f"Total assets: {total_assets:.2f} USDT")
+
+            # 計算資產變化：目前總資產減去初始資金
+            asset_change = total_assets - self.initial_capital
+            change_str = (
+                f"+{asset_change:.2f}" if asset_change >= 0 else f"{asset_change:.2f}"
+            )
+            self.log(f"資產變化: {change_str} USDT")
+
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
             self.log("Order canceled/margin/rejected")
             self.order = None
 
     def log(self, txt, dt=None, to_print=True):
         """
-        log 函數將訊息寫入檔案（透過 logging 模組）並可選擇是否印出至終端機。
+        將訊息寫入 log 檔並可選擇印出至終端機。
 
         參數:
-            txt (str): 要記錄的訊息。
-            dt (datetime, optional): 若未提供則使用資料的時間。
-            to_print (bool): 是否將訊息印出至終端機，預設 True；若設為 False，則僅寫入 log 檔案。
+          txt (str): 要記錄的訊息。
+          dt (datetime, optional): 時間戳，預設使用當前資料的時間。
+          to_print (bool): 是否印出訊息至終端機，預設 True。
         """
         dt = dt or self.datas[0].datetime.datetime(0)
         message = f"{dt.strftime('%Y-%m-%d %H:%M:%S')} - {txt}"
@@ -158,19 +202,17 @@ class SmaCoreStrategy(bt.Strategy):
 
     def get_result(self):
         """
-        返回策略運行結束時的統計資訊，包括：
-        - 回測資料的開始時間 (start_time) 與結束時間 (end_time)
-        - 初始資金、最終資產（USDT）、獲利、獲利率
-        - 買入次數、賣出次數、總手續費（USDT）
-        - 策略參數：短期 SMA 週期、長期 SMA 週期、買入使用比例 (buy_pct)
+        返回策略回測結束時的統計資訊，包括：
+          - 回測資料開始與結束時間
+          - 初始資金、最終資產、獲利及獲利率
+          - 買入次數、賣出次數、總手續費
+          - 策略參數設定
         """
-        # 若資料來源為 pandas DataFrame，則利用索引取得第一筆與最後一筆的時間
         if hasattr(self.data, "_dataname") and isinstance(
             self.data._dataname, pd.DataFrame
         ):
             start_time = self.data._dataname.index[0]
             end_time = self.data._dataname.index[-1]
-            # 將 datetime 格式轉為字串
             start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
             end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
         else:
@@ -195,3 +237,141 @@ class SmaCoreStrategy(bt.Strategy):
             "short_period": self.p.short_period,
             "long_period": self.p.long_period,
         }
+
+
+def run_strategy(
+    data, init_capital=10000, short_period=5, long_period=20, buy_pct=0.3, plot=False
+):
+    """
+    建立 Backtrader 引擎，設定資料與策略，執行回測並返回策略績效報告。
+
+    參數:
+      data (pd.DataFrame): 歷史 K 線資料，必須包含 'datetime', 'open', 'high', 'low', 'close', 'volume'
+      init_capital (float): 初始資金，預設 10000 USDT
+      short_period (int): 短期 SMA 週期
+      long_period (int): 長期 SMA 週期
+      buy_pct (float): 每次買入所使用的初始資金比例
+      plot (bool): 是否繪製回測圖表
+
+    返回:
+      dict: 策略回測的績效報告
+    """
+    datafeed = bt.feeds.PandasData(dataname=data)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(datafeed)
+    cerebro.addstrategy(
+        SmaCoreStrategy,
+        short_period=short_period,
+        long_period=long_period,
+        buy_pct=buy_pct,
+    )
+    cerebro.broker.setcash(init_capital)
+
+    results = cerebro.run()
+    strategy_instance = results[0]
+    result = strategy_instance.get_result()
+
+    print("策略結果：", result)
+    if plot:
+        cerebro.plot()
+
+    return result
+
+
+def save_report(dir_path: str, filename: str, df: pd.DataFrame):
+    """
+    將回測結果 DataFrame 儲存為 CSV 檔。
+
+    參數:
+      dir_path (str): 儲存的資料夾路徑。
+      filename (str): 檔案基本名稱。
+      df (pd.DataFrame): 回測結果 DataFrame。
+    """
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"{filename}_report_{timestamp}.csv"
+    filepath = os.path.join(dir_path, filename)
+    df.to_csv(filepath, index=False)
+    print(f"檔案已儲存至 {filepath}")
+
+
+# -------------------------------------------------------------------
+# __main__ 區塊 - 回測主程式 (可直接執行此檔案進行回測)
+# -------------------------------------------------------------------
+if __name__ == "__main__":
+    # 載入歷史資料
+    import sys
+    import os
+
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from utils.data_loader import DataLoader  # 確保 utils/data_loader.py 可用
+
+    # 設定交易所參數
+    exchange_config = {
+        "exchange_id": "binance",
+        "symbol": "DOGE/USDT",
+        "timeframe": "1m",
+    }
+    # 產生統一的資料表名稱
+    tablename = DataLoader.generate_table_name(exchange_config)
+    print(f"使用的資料表名稱: {tablename}")
+
+    # 建立 DataLoader 實例並下載資料
+    data_loader = DataLoader()
+    start_time_str = "2025-01-01 00:00:00"
+    end_time_str = "2025-04-14 23:59:59"
+    df = data_loader.load_data(
+        exchange_config=exchange_config,
+        destination="ccxt",
+        start_time=start_time_str,
+        end_time=end_time_str,
+    )
+
+    # 轉換 "datetime" 欄位為 datetime 型態並設為索引
+    if "datetime" in df.columns:
+        if not pd.api.types.is_datetime64_any_dtype(df["datetime"]):
+            sample = df["datetime"].iloc[0]
+            if isinstance(sample, (int, float)):
+                df["datetime"] = pd.to_datetime(df["datetime"], unit="ms")
+            else:
+                df["datetime"] = pd.to_datetime(df["datetime"])
+        df.set_index("datetime", inplace=True)
+    else:
+        raise KeyError("資料中必須包含 'datetime' 欄位")
+
+    # -------------------------------------------------------------------
+    # 回測執行 - 可選擇單次回測或批次回測
+    # -------------------------------------------------------------------
+
+    # 若需要單次回測，請將以下 if 條件設為 True
+    if 0:
+        run_strategy(
+            df,
+            init_capital=10000,
+            short_period=20,
+            long_period=120,
+            buy_pct=0.8,
+            plot=True,
+        )
+
+    # 批次回測示範：遍歷不同的 SMA 參數組合
+    if 1:
+        shorts = [5, 10, 20, 60, 120, 240]
+        longs = [5, 10, 20, 60, 120, 240]
+        results = []
+        for short in shorts:
+            for long in longs:
+                if short < long:
+                    result = run_strategy(
+                        df,
+                        init_capital=10000,
+                        short_period=short,
+                        long_period=long,
+                        buy_pct=0.8,
+                        plot=False,
+                    )
+                    results.append(result)
+        df_result = pd.DataFrame(results)
+        df_result_sorted = df_result.sort_values(by="profit_rate", ascending=False)
+        print(df_result_sorted)
+        save_report("results", tablename, df_result_sorted)
