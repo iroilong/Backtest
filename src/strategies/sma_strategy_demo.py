@@ -177,9 +177,9 @@ class LiveSandboxTrading:
                     ccy = asset.get("ccy", "N/A")
                     availBal = asset.get("availBal", "0")
                     eqUsd = asset.get("eqUsd", "0")
-                    self.log(f"{ccy} = {availBal} ({float(eqUsd):.0f} USD)")
+                    self.log(f"{ccy} = {availBal} ({float(eqUsd):.2f} USD)")
                 total_eq = data.get("totalEq", "0")
-                self.log(f"帳戶總資產 = {float(total_eq):.0f} USD")
+                self.log(f"帳戶總資產 = {float(total_eq):.2f} USD")
             else:
                 self.log(f"取得帳戶資訊失敗: {balance_data}")
         except Exception as e:
@@ -233,10 +233,11 @@ class LiveSandboxTrading:
         fee = abs(float(final["fee"]))
         fee_ccy = final.get("feeCcy", "?")  # 手續費幣別
 
-        # 如果手續費幣別為 BTC，則換算成 USDT 等值，方便閱讀
-        if fee_ccy.upper() == "BTC":
+        # 如果手續費幣別不為 USDT，則換算成 USDT 等值，方便閱讀
+        base, quote = self.symbol.split("-")
+        if fee_ccy.upper() != "USDT":
             fee_usdt = fee * price
-            fee_display = f"{fee:.8f} BTC（≈ {fee_usdt:.2f} USDT）"
+            fee_display = f"{fee:.8f} {base}（≈ {fee_usdt:.2f} USDT）"
         else:
             fee_display = f"{fee:.6f} {fee_ccy}"
 
@@ -380,12 +381,14 @@ class LiveSandboxTrading:
         if balance_info:
             self.log("目前手上幣對數量及其市值:")
             self.log(
-                f"{balance_info['base_currency']}: {balance_info['base_amount']:,.6f} {balance_info['base_currency']}（價值 ${balance_info['base_eqUsd']:,.0f} USD）"
+                f"{balance_info['base_currency']}: {balance_info['base_amount']:,.6f} {balance_info['base_currency']}（價值 ${balance_info['base_eqUsd']:,.2f} USD）"
             )
             self.log(
-                f"{balance_info['quote_currency']}: {balance_info['quote_amount']:,.6f} {balance_info['quote_currency']}（價值 ${balance_info['quote_eqUsd']:,.0f} USD）"
+                f"{balance_info['quote_currency']}: {balance_info['quote_amount']:,.6f} {balance_info['quote_currency']}（價值 ${balance_info['quote_eqUsd']:,.2f} USD）"
             )
-            self.log(f"BTC+USDT 總價值 ${balance_info['total_usd_value']:,.0f} USD")
+            self.log(
+                f"{self.symbol} 總價值 ${balance_info['total_usd_value']:,.2f} USD"
+            )
             init_total_usd = balance_info["total_usd_value"]
         else:
             self.log("無法獲取帳戶餘額")
@@ -399,7 +402,7 @@ class LiveSandboxTrading:
             self.log("策略開始")
             while True:
                 # 取得行情
-                ticker = self.get_simple_ticker(self.marketDataAPI, "BTC-USDT")
+                ticker = self.get_simple_ticker(self.marketDataAPI, self.symbol)
                 if ticker:
                     timestamp = ticker["timestamp"]
                     tw_time = datetime.datetime.fromtimestamp(
@@ -425,6 +428,17 @@ class LiveSandboxTrading:
                                 "amount": trade_result["amount"],
                             }
                             self.buy_count += 1
+                            # 計算幣對資產變動
+                            balance_info = self.get_balance_for_pair(self.symbol)
+                            if balance_info:
+                                currtne_total_usd = float(
+                                    balance_info["total_usd_value"]
+                                )
+                                diff_total_usd = currtne_total_usd - init_total_usd
+                                self.log(f"幣對總資產: {currtne_total_usd:,.2f} USD")
+                                self.log(f"幣對資產變化: {diff_total_usd:,.2f} USD")
+                            else:
+                                self.log("無法獲取帳戶餘額")
                     else:
                         self.log("已持有部位，無法買入")
                 elif signal == "sell":
@@ -436,6 +450,17 @@ class LiveSandboxTrading:
                         if trade_result:
                             self.position = None
                             self.sell_count += 1
+                            # 計算幣對資產變動
+                            balance_info = self.get_balance_for_pair(self.symbol)
+                            if balance_info:
+                                currtne_total_usd = float(
+                                    balance_info["total_usd_value"]
+                                )
+                                diff_total_usd = currtne_total_usd - init_total_usd
+                                self.log(f"幣對總資產: {currtne_total_usd:,.2f} USD")
+                                self.log(f"幣對資產變化: {diff_total_usd:,.2f} USD")
+                            else:
+                                self.log("無法獲取帳戶餘額")
                     else:
                         self.log("無持倉，無法賣出")
                 time.sleep(self.poll_interval)
@@ -464,12 +489,14 @@ class LiveSandboxTrading:
             if balance_info:
                 self.log("目前手上幣對數量及其市值:")
                 self.log(
-                    f"{balance_info['base_currency']}: {balance_info['base_amount']:,.6f} {balance_info['base_currency']}（價值 ${balance_info['base_eqUsd']:,.0f} USD）"
+                    f"{balance_info['base_currency']}: {balance_info['base_amount']:,.6f} {balance_info['base_currency']}（價值 ${balance_info['base_eqUsd']:,.2f} USD）"
                 )
                 self.log(
-                    f"{balance_info['quote_currency']}: {balance_info['quote_amount']:,.6f} {balance_info['quote_currency']}（價值 ${balance_info['quote_eqUsd']:,.0f} USD）"
+                    f"{balance_info['quote_currency']}: {balance_info['quote_amount']:,.6f} {balance_info['quote_currency']}（價值 ${balance_info['quote_eqUsd']:,.2f} USD）"
                 )
-                self.log(f"BTC+USDT 總價值 ${balance_info['total_usd_value']:,.0f} USD")
+                self.log(
+                    f"{self.symbol} 總價值 ${balance_info['total_usd_value']:,.2f} USD"
+                )
                 final_total_usd = balance_info["total_usd_value"]
             else:
                 self.log("無法獲取帳戶餘額")
@@ -481,7 +508,7 @@ class LiveSandboxTrading:
             self.log(
                 f"📊 已實現損益（策略本身盈虧）: {self.tracker.get_profit():,.2f} USD"
             )
-            self.log(f"📊 賬戶總資產變動: {final_total_usd - init_total_usd:,.2f} USD")
+            self.log(f"📊 幣對總資產變動: {final_total_usd - init_total_usd:,.2f} USD")
 
             summary = {
                 "start_time": self.start_time.strftime("%Y-%m-%d %H:%M:%S"),

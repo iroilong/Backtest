@@ -318,7 +318,7 @@ if __name__ == "__main__":
 
     # 建立 DataLoader 實例並下載資料
     data_loader = DataLoader()
-    start_time_str = "2025-01-01 00:00:00"
+    start_time_str = "2025-03-01 00:00:00"
     end_time_str = "2025-04-14 23:59:59"
     df = data_loader.load_data(
         exchange_config=exchange_config,
@@ -342,9 +342,10 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------
     # 回測執行 - 可選擇單次回測或批次回測
     # -------------------------------------------------------------------
+    print(df)
 
     # 若需要單次回測，請將以下 if 條件設為 True
-    if 0:
+    if 1:
         run_strategy(
             df,
             init_capital=10000,
@@ -355,7 +356,7 @@ if __name__ == "__main__":
         )
 
     # 批次回測示範：遍歷不同的 SMA 參數組合
-    if 1:
+    if 0:
         shorts = [5, 10, 20, 60, 120, 240]
         longs = [5, 10, 20, 60, 120, 240]
         results = []

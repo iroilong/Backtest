@@ -1,155 +1,51 @@
-# import asyncio
-# import websockets
-# import json
-# import time
-
-
-# async def subscribe_ticker():
-#     uri = "wss://ws.okx.com:8443/ws/v5/public"
-#     async with websockets.connect(uri) as websocket:
-#         # 訂閱 BTC/USDT 的 ticker 資料
-#         subscription_msg = {
-#             "op": "subscribe",
-#             "args": [{"channel": "tickers", "instId": "BTC-USDT"}],
-#         }
-#         await websocket.send(json.dumps(subscription_msg))
-#         print("訂閱訊息已發送，等待數據...")
-
-#         # 持續接收並顯示來自 OKX 的數據
-#         while True:
-#             response = await websocket.recv()
-#             print(response)
-#             time.sleep(5)
-
-
-# asyncio.get_event_loop().run_until_complete(subscribe_ticker())
-
-# exit()
-
-
-################### API ####################
-"""
-apikey = "87561929-75c9-4ec2-928d-caf03c1cc7a9"
-secretkey = "D5CBAFD3B4B13991EED0BB0669A73582"
-IP = ""
-password = "Okx7513#"
-備註名 = "DemoOKX"
-權限 = "讀取/提現/交易"'
-"""
-############################################
-
-
-import ccxt
+import re
 import pandas as pd
-import time
 
-# 設定OKX沙盒環境
-exchange = ccxt.okx(
-    {
-        "apiKey": "87561929-75c9-4ec2-928d-caf03c1cc7a9",
-        "secret": "D5CBAFD3B4B13991EED0BB0669A73582",
-        "password": "Okx7513#",
-        "enableRateLimit": True,
-    }
-)
-exchange.set_sandbox_mode(True)  # 啟用模擬環境
+# 範例 raw data，實際上你可以從檔案讀取
+raw_lines = []
+with open("./results/sma_strategy_bt_20250321_030146.log", "r") as fo:
+    raw_lines = fo.read().splitlines()
 
-# 查詢帳戶餘額
-balance = exchange.fetch_balance()
-# print(balance)
 
-# 假設 balance 為 fetch_balance 回傳的字典
-assets = []
-for asset in balance["free"]:
-    assets.append(
-        {
-            "asset": asset,
-            "free": balance["free"][asset],
-            "used": balance["used"][asset],
-            "total": balance["total"][asset],
-        }
-    )
+# raw_lines = [
+#     "2025-03-21 03:03:19 - INFO - 2024-10-01 05:05:00 - OHLCV => Open: 63804.00, High: 63810.00, Low: 63790.00, Close: 63790.00, Volume: 20.34584",
+#     "2025-03-21 03:03:19 - INFO - 2024-10-01 05:06:00 - OHLCV => Open: 63790.00, High: 63790.01, Low: 63742.53, Close: 63750.00, Volume: 24.84501",
+#     "2025-03-21 03:03:19 - INFO - 2024-10-01 05:07:00 - OHLCV => Open: 63750.00, High: 63764.00, Low: 63749.93, Close: 63757.01, Volume: 11.64213",
+#     "2025-03-21 03:03:19 - INFO - 2024-10-01 05:07:00 - Sell order placed at price 63757.01",
+#     "2025-03-21 03:03:19 - INFO - 2024-10-01 05:08:00 - Sell executed: size=-0.126167 at price 63757.01, trade value=-8044.03 USDT, fee=-6.44 USDT",
+#     "2025-03-21 03:03:19 - INFO - 2024-10-01 05:08:00 - OHLCV => Open: 63757.01, High: 63780.00, Low: 63757.00, Close: 63775.47, Volume: 12.97564",
+#     # ... 其它 raw data 行
+# ]
 
-df = pd.DataFrame(assets)
+# 使用正則表達式匹配符合格式的 OHLCV log 行
+pattern = r".* - (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - OHLCV => Open: ([\d.]+), High: ([\d.]+), Low: ([\d.]+), Close: ([\d.]+), Volume: ([\d.]+)"
+
+data = []
+for line in raw_lines[:10]:
+    m = re.match(pattern, line)
+    if m:
+        # 取得 OHLCV 時間與各數值
+        timestamp_str = m.group(1)
+        open_val = float(m.group(2))
+        high_val = float(m.group(3))
+        low_val = float(m.group(4))
+        close_val = float(m.group(5))
+        volume_val = float(m.group(6))
+        data.append(
+            {
+                "datetime": pd.to_datetime(timestamp_str),
+                "open": open_val,
+                "high": high_val,
+                "low": low_val,
+                "close": close_val,
+                "volume": volume_val,
+                "symbol": "DOGE/USDT",  # 固定 symbol，可根據實際需求調整
+            }
+        )
+
+# 建立 DataFrame 並設定 datetime 為索引，依時間排序
+df = pd.DataFrame(data)
+df = df.set_index("datetime").sort_index()
+
 print(df)
-symbol = "BTC/USDT"
-
-# for i in range(10):
-#     # 取得當前市場價格資訊
-#     ticker = exchange.fetch_ticker(symbol)
-
-#     # 輸出當前價格（last 為最近成交價格）
-#     print("BTC 當前市價：", ticker["last"])
-#     time.sleep(1)
-
-# exit()
-
-
-try:
-    trades = exchange.fetch_my_trades(symbol)
-    # for trade in trades:
-    #     print(trade)
-except Exception as e:
-    print("查詢成交記錄失敗:", e)
-
-try:
-    orders = exchange.fetchOpenOrders(symbol)
-    # for order in orders:
-    #     print(order)
-except Exception as e:
-    print("查詢訂單記錄失敗:", e)
-
-# 抽取關鍵欄位
-formatted_trades = []
-for t in trades:
-    dt = pd.to_datetime(t.get("datetime"), utc=True).tz_convert("Asia/Taipei")
-    formatted_trades.append(
-        {
-            "交易ID": t.get("id"),
-            "訂單ID": t.get("order"),
-            "時間": dt.strftime("%Y-%m-%d %H:%M:%S"),
-            "交易對": t.get("symbol"),
-            "方向": t.get("side"),
-            "價格": t.get("price"),
-            "數量": t.get("amount"),
-            "成交額": t.get("cost"),
-            "手續費": t.get("fee", {}).get("cost"),
-            "手續費幣別": t.get("fee", {}).get("currency"),
-        }
-    )
-
-# 利用 Pandas 建立 DataFrame 並印出
-df = pd.DataFrame(formatted_trades)
-print(df)
-
-
-try:
-    orders = exchange.fetchClosedOrders(symbol)
-    # for order in orders:
-    #     print(order)
-except Exception as e:
-    print("查詢訂單記錄失敗:", e)
-
-# 抽取關鍵欄位
-formatted_trades = []
-for t in trades:
-    dt = pd.to_datetime(t.get("datetime"), utc=True).tz_convert("Asia/Taipei")
-
-    formatted_trades.append(
-        {
-            "交易ID": t.get("id"),
-            "訂單ID": t.get("order"),
-            "時間": dt.strftime("%Y-%m-%d %H:%M:%S"),
-            "交易對": t.get("symbol"),
-            "方向": t.get("side"),
-            "價格": t.get("price"),
-            "數量": t.get("amount"),
-            "成交額": t.get("cost"),
-            "手續費": t.get("fee", {}).get("cost"),
-            "手續費幣別": t.get("fee", {}).get("currency"),
-        }
-    )
-
-# 利用 Pandas 建立 DataFrame 並印出
-df = pd.DataFrame(formatted_trades)
-print(df)
+df.to_csv("./results/sma_strategy_bt_20250321_030146_1s.csv")

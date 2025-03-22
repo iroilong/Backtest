@@ -43,7 +43,7 @@ if __name__ == "__main__":
     # 設定交易所參數 exchange_config
     exchange_config = {
         "exchange_id": "binance",
-        "symbol": "BTC/USDT",
+        "symbol": "DOGE/USDT",
         "timeframe": "1m",
     }
 
@@ -51,8 +51,8 @@ if __name__ == "__main__":
     df = data_loader.load_data(
         exchange_config=exchange_config,
         destination="ccxt",
-        start_time="2025-03-03 00:00:00",
-        end_time="2025-03-08 15:59:59",
+        start_time="2025-01-01 00:00:00",
+        end_time="2025-04-08 15:59:59",
     )
 
     # 呼叫 plot_candlestick_chart() 繪製 K 線圖
