@@ -28,7 +28,7 @@
 
 版本: 1.0
 建立日期: 2025-03-21
-作者: [你的名字或團隊名稱]
+作者: [ChatGPT o3-mini-high]
 """
 
 import backtrader as bt
@@ -309,12 +309,9 @@ if __name__ == "__main__":
     # 設定交易所參數
     exchange_config = {
         "exchange_id": "binance",
-        "symbol": "DOGE/USDT",
+        "symbol": "BTC/USDT",
         "timeframe": "1m",
     }
-    # 產生統一的資料表名稱
-    tablename = DataLoader.generate_table_name(exchange_config)
-    print(f"使用的資料表名稱: {tablename}")
 
     # 建立 DataLoader 實例並下載資料
     data_loader = DataLoader()
@@ -339,10 +336,13 @@ if __name__ == "__main__":
     else:
         raise KeyError("資料中必須包含 'datetime' 欄位")
 
+    # 產生統一的資料表名稱
+    tablename = DataLoader.generate_table_name(exchange_config)
+    print(f"使用的資料表名稱: {tablename}")
+
     # -------------------------------------------------------------------
     # 回測執行 - 可選擇單次回測或批次回測
     # -------------------------------------------------------------------
-    print(df)
 
     # 若需要單次回測，請將以下 if 條件設為 True
     if 1:

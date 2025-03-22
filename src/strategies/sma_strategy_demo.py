@@ -39,7 +39,7 @@
 
 版本: 1.0
 建立日期: 2025-03-21
-作者: [你的名字或團隊名稱]
+作者: [ChatGPT o3-mini-high]
 """
 
 import datetime
