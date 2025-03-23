@@ -45,7 +45,7 @@ logger = logging.getLogger("SmaCoreStrategyLogger")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    log_filename = f"results/sma_strategy_bt_{timestamp}.log"
+    log_filename = f"results/log/sma_strategy_bt_{timestamp}.log"
     fh = logging.FileHandler(log_filename, mode="a", encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
@@ -306,22 +306,39 @@ if __name__ == "__main__":
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     from utils.data_loader import DataLoader  # 確保 utils/data_loader.py 可用
 
+    # ============= Parameters Start Here ====================
+    # Dataloader
+    SYMBOL = "BTC/USDT"
+    TIMEFRAME = "1h"
+    START_TIME = "2024-10-01 00:00:00"
+    END_TIME = "2025-04-14 23:59:59"
+    # SMA Backtest
+    INIT_CAPITAL = 10000
+    SHORT_PERIOD = 10
+    LONG_PERIOD = 20
+    BUY_PERCENTATGE = 0.8
+    # Multi
+    SHORTS = [5, 10, 20, 60, 120, 240]
+    LONGS = [5, 10, 20, 60, 120, 240]
+    # Mode
+    RUN_SINGLE_BT = True
+    RUN_MULTI_BT = True
+    # ============= Parameters Stop Here ====================
+
     # 設定交易所參數
     exchange_config = {
         "exchange_id": "binance",
-        "symbol": "BTC/USDT",
-        "timeframe": "1m",
+        "symbol": SYMBOL,
+        "timeframe": TIMEFRAME,
     }
 
     # 建立 DataLoader 實例並下載資料
     data_loader = DataLoader()
-    start_time_str = "2025-03-01 00:00:00"
-    end_time_str = "2025-04-14 23:59:59"
     df = data_loader.load_data(
         exchange_config=exchange_config,
         destination="ccxt",
-        start_time=start_time_str,
-        end_time=end_time_str,
+        start_time=START_TIME,
+        end_time=END_TIME,
     )
 
     # 轉換 "datetime" 欄位為 datetime 型態並設為索引
@@ -345,34 +362,32 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------
 
     # 若需要單次回測，請將以下 if 條件設為 True
-    if 1:
+    if RUN_SINGLE_BT:
         run_strategy(
             df,
-            init_capital=10000,
-            short_period=20,
-            long_period=120,
-            buy_pct=0.8,
+            init_capital=INIT_CAPITAL,
+            short_period=SHORT_PERIOD,
+            long_period=LONG_PERIOD,
+            buy_pct=BUY_PERCENTATGE,
             plot=True,
         )
 
     # 批次回測示範：遍歷不同的 SMA 參數組合
-    if 0:
-        shorts = [5, 10, 20, 60, 120, 240]
-        longs = [5, 10, 20, 60, 120, 240]
+    if RUN_MULTI_BT:
         results = []
-        for short in shorts:
-            for long in longs:
+        for short in SHORTS:
+            for long in LONGS:
                 if short < long:
                     result = run_strategy(
                         df,
-                        init_capital=10000,
+                        init_capital=INIT_CAPITAL,
                         short_period=short,
                         long_period=long,
-                        buy_pct=0.8,
+                        buy_pct=BUY_PERCENTATGE,
                         plot=False,
                     )
                     results.append(result)
         df_result = pd.DataFrame(results)
         df_result_sorted = df_result.sort_values(by="profit_rate", ascending=False)
         print(df_result_sorted)
-        save_report("results", tablename, df_result_sorted)
+        save_report("results/report", tablename, df_result_sorted)

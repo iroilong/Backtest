@@ -62,7 +62,7 @@ logger = logging.getLogger("OkxLiveSandboxLogger")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    log_filename = f"results/sma_strategy_demo_{timestamp}.log"
+    log_filename = f"results/log/sma_strategy_demo_{timestamp}.log"
     fh = logging.FileHandler(log_filename, mode="a", encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
