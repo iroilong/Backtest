@@ -46,6 +46,7 @@ import datetime
 import time
 import logging
 import pandas as pd
+from decimal import Decimal, ROUND_DOWN
 
 # 依照你的專案結構調整 import 路徑（此處假設 sma_core.py 與此檔案同層）
 from sma_core import SmaCore
@@ -140,6 +141,7 @@ class LiveSandboxTrading:
 
     def __init__(
         self,
+        trading_mode="demo",
         symbol="BTC-USDT",
         poll_interval=60,
         buy_usdt=300,
@@ -153,7 +155,16 @@ class LiveSandboxTrading:
         self.secret_key = "D5CBAFD3B4B13991EED0BB0669A73582"
         self.passphrase = "Okx7513#"
         self.symbol = symbol
-        flag = "1"  # live trading: 0, demo trading: 1
+        # 交易模式選擇
+        if trading_mode == "demo":
+            flag = "1"  # live trading: 0, demo trading: 1
+            self.log("交易模式: 模擬交易")
+        elif trading_mode == "live":
+            flag = "0"  # live trading: 0, demo trading: 1
+            self.log("交易模式: 實盤交易")
+        else:
+            self.log("無此交易模式，結束程式。flag = {self.flag}")
+            exit()
 
         # 初始化 OKX API 物件：帳戶、訂單、市場資料
         self.accountAPI = Account.AccountAPI(
@@ -182,8 +193,14 @@ class LiveSandboxTrading:
                 self.log(f"帳戶總資產 = {float(total_eq):.2f} USD")
             else:
                 self.log(f"取得帳戶資訊失敗: {balance_data}")
+                self.log(f"請確認交易模式。")
+                self.log(f"程式中止！")
+                exit()
         except Exception as e:
             self.log(f"取得帳戶資訊失敗：{e}")
+            self.log(f"請確認交易模式。")
+            self.log(f"程式中止！")
+            exit()
 
         self.poll_interval = poll_interval
         self.buy_usdt = buy_usdt
@@ -191,7 +208,18 @@ class LiveSandboxTrading:
         self.strategy = SmaCore(short_period, long_period)
         self.position = None  # 初始無部位
 
-    def place_and_track_market_order(self, side, size, timeout=10):
+    def format_number(self, value, precision=8):
+        """
+        將 float 數值格式化為 OKX API 可接受的合法字串格式。
+        """
+        if value <= 0:
+            raise ValueError("數值必須大於 0")
+        d = Decimal(str(value)).quantize(
+            Decimal(f"1e-{precision}"), rounding=ROUND_DOWN
+        )
+        return format(d, "f").rstrip("0").rstrip(".")
+
+    def place_and_track_market_order(self, side, size, timeout=20):
         """
         下市價單並等待訂單完全成交或取消。
 
@@ -204,12 +232,22 @@ class LiveSandboxTrading:
             dict: 成交結果，包含成交價格與數量；若下單或成交失敗則回傳 None。
         """
         # 呼叫 API 下單，並指定 tgtCcy="base_ccy" 表示數量以基礎幣計算
+        base, quote = self.symbol.split("-")
+        if side == "buy":
+            self.log(
+                f"下單, 買入 {base}, 數量 = {size:,.6f}, 數量str = {self.format_number(size)}"
+            )
+        else:
+            self.log(
+                f"下單, 賣出 {base}, 數量 = {size:,.6f}, 數量str = {self.format_number(size)}"
+            )
+
         order = self.tradeAPI.place_order(
             instId=self.symbol,
             tdMode="cash",
             side=side,
             ordType="market",
-            sz=str(size),
+            sz=self.format_number(size),
             tgtCcy="base_ccy",
         )
 
@@ -246,7 +284,7 @@ class LiveSandboxTrading:
         self.log(
             f"📌 成交：{side.upper()} {amount:.6f} @ {price:.2f}, 手續費: {fee_display}"
         )
-        self.log(f"📊 累積盈虧：{self.tracker.get_profit():,.2f} USD")
+        self.log(f"📊 策略累積盈虧(不含浮動)：{self.tracker.get_profit():,.2f} USD")
 
         return {"price": price, "amount": amount}
 
@@ -342,30 +380,25 @@ class LiveSandboxTrading:
             self.log(f"取得帳戶資訊失敗: {balance_data}")
             return None
 
-    def get_simple_ticker(self, api, inst_id="BTC-USDT"):
-        """
-        取得指定交易對的簡易行情資訊。
-
-        參數:
-            api: 市場資料 API 物件。
-            inst_id (str): 交易對字串，例如 "BTC-USDT"。
-
-        回傳:
-            dict: 包含 timestamp、instType、instId、last（最新價）及 lastSz（成交量）的行情資料；若失敗回傳 None。
-        """
-        result = api.get_ticker(instId=inst_id.upper())
-        if result.get("code") != "0":
-            self.log("取得 ticker 失敗")
-            return None
-
-        ticker = result["data"][0]
-        return {
-            "timestamp": ticker.get("ts"),
-            "instType": ticker.get("instType"),
-            "instId": ticker.get("instId"),
-            "last": ticker.get("last"),
-            "lastSz": ticker.get("lastSz"),
-        }
+    def get_simple_ticker(self, api, inst_id="BTC-USDT", retry=10):
+        for attempt in range(retry):
+            try:
+                result = api.get_ticker(instId=inst_id.upper())
+                if result.get("code") != "0":
+                    self.log("取得 ticker 失敗")
+                    return None
+                ticker = result["data"][0]
+                return {
+                    "timestamp": ticker.get("ts"),
+                    "instType": ticker.get("instType"),
+                    "instId": ticker.get("instId"),
+                    "last": ticker.get("last"),
+                    "lastSz": ticker.get("lastSz"),
+                }
+            except Exception as e:
+                self.log(f"取得 ticker 發生例外 (嘗試 {attempt+1}/{retry}): {e}")
+                time.sleep(1)
+        return None
 
     def run(self):
         """
@@ -375,7 +408,7 @@ class LiveSandboxTrading:
           - 捕捉 KeyboardInterrupt 後若有持倉則強制平倉，最後統計並列印交易結果摘要。
         """
         self.log("\n\n" + "*" * 50)
-        self.log("啟動 OKX 沙盒實盤模擬交易程序")
+        self.log("啟動 OKX 實盤交易程序")
         self.log(f"交易幣對: {self.symbol}")
         balance_info = self.get_balance_for_pair(self.symbol)
         if balance_info:
@@ -400,6 +433,12 @@ class LiveSandboxTrading:
         try:
             self.log("\n\n" + "*" * 50)
             self.log("策略開始")
+            self.log("策略名稱: SMA")
+            self.log(f"交易對: {self.symbol}")
+            self.log(f"輪詢行情間隔 = {self.poll_interval} 秒")
+            self.log(f"每次買入金額 = {self.buy_usdt} USDT")
+            self.log(f"短期均線周期 = {self.strategy.short_period}")
+            self.log(f"長期均線周期 = {self.strategy.long_period}")
             while True:
                 # 取得行情
                 ticker = self.get_simple_ticker(self.marketDataAPI, self.symbol)
@@ -428,6 +467,7 @@ class LiveSandboxTrading:
                                 "amount": trade_result["amount"],
                             }
                             self.buy_count += 1
+                            self.log(f"總計買入次數: {self.buy_count}")
                             # 計算幣對資產變動
                             balance_info = self.get_balance_for_pair(self.symbol)
                             if balance_info:
@@ -450,6 +490,7 @@ class LiveSandboxTrading:
                         if trade_result:
                             self.position = None
                             self.sell_count += 1
+                            self.log(f"總計賣出次數: {self.buy_count}")
                             # 計算幣對資產變動
                             balance_info = self.get_balance_for_pair(self.symbol)
                             if balance_info:
@@ -535,10 +576,11 @@ if __name__ == "__main__":
     poll_interval = 1  # 輪詢間隔（秒）
     buy_usdt = 100  # 每次買入金額（USDT）
     sandbox = LiveSandboxTrading(
+        trading_mode="demo",  # "live" or "demo"
         symbol="BTC-USDT",
         poll_interval=poll_interval,
         buy_usdt=buy_usdt,
-        short_period=2,  # 短期 SMA 參數
-        long_period=4,  # 長期 SMA 參數
+        short_period=10,  # 短期 SMA 參數
+        long_period=120,  # 長期 SMA 參數
     )
     sandbox.run()

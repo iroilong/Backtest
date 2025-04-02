@@ -310,19 +310,19 @@ if __name__ == "__main__":
     # Dataloader
     SYMBOL = "BTC/USDT"
     TIMEFRAME = "1h"
-    START_TIME = "2024-10-01 00:00:00"
+    START_TIME = "2025-01-01 00:00:00"
     END_TIME = "2025-04-14 23:59:59"
     # SMA Backtest
-    INIT_CAPITAL = 10000
+    INIT_CAPITAL = 1000
     SHORT_PERIOD = 10
-    LONG_PERIOD = 20
-    BUY_PERCENTATGE = 0.8
+    LONG_PERIOD = 120
+    BUY_PERCENTATGE = 0.1
     # Multi
     SHORTS = [5, 10, 20, 60, 120, 240]
     LONGS = [5, 10, 20, 60, 120, 240]
     # Mode
     RUN_SINGLE_BT = True
-    RUN_MULTI_BT = True
+    RUN_MULTI_BT = False
     # ============= Parameters Stop Here ====================
 
     # 設定交易所參數
