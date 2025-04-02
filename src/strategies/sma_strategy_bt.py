@@ -79,10 +79,11 @@ class SmaCoreStrategy(bt.Strategy):
         # 記錄策略啟動時的初始資金
         self.initial_capital = self.broker.getcash()
 
-        # 初始化累計變數：買入次數、賣出次數、累計手續費（以 USDT 計算）
+        # 初始化累計變數：買入次數、賣出次數、累計手續費（以 USDT 計算）與累計實現盈虧
         self.buy_count = 0
         self.sell_count = 0
         self.total_fee_usdt = 0.0
+        self.cum_pnl = 0.0  # 累計已實現損益
 
         # 加入短期與長期 SMA 指標線
         self.sma_short_indicator = bt.indicators.SimpleMovingAverage(
@@ -91,6 +92,24 @@ class SmaCoreStrategy(bt.Strategy):
         self.sma_long_indicator = bt.indicators.SimpleMovingAverage(
             self.data.close, period=self.p.long_period, plotname="SMA Long"
         )
+
+    def start(self):
+        """
+        回測啟動時記錄初始狀態
+        """
+        self.log("啟動回測交易")
+        self.log("交易幣對: BTC-USDT")
+        # 取得初始現金與持倉（預設空倉）
+        cash = self.broker.getcash()
+        position = self.getposition(self.data)
+        btc_qty = position.size if position else 0.0
+        current_price = self.data.close[0]
+        btc_value = btc_qty * current_price
+        total_assets = cash + btc_value
+        self.log("目前手上幣對數量及其市值:")
+        self.log(f"BTC: {btc_qty:.6f} BTC（價值 ${btc_value:.2f} USDT）")
+        self.log(f"USDT: {cash:.6f} USDT")
+        self.log(f"BTC-USDT 總價值 ${total_assets:.3f} USDT")
 
     def next(self):
         """
@@ -147,9 +166,8 @@ class SmaCoreStrategy(bt.Strategy):
     def notify_order(self, order):
         """
         當訂單狀態改變時呼叫：
-        - 若訂單成交，計算手續費、更新統計數據，
-            並印出目前總資產及與初始資金的變化。
-        - 若訂單取消或失敗，則記錄相應訊息。
+          - 若訂單成交，計算手續費、更新統計數據，並印出目前總資產、買賣次數與資產變化。
+          - 若訂單取消或失敗，則記錄相應訊息。
         """
         if order.status in [order.Completed]:
             if order.isbuy():
@@ -158,7 +176,7 @@ class SmaCoreStrategy(bt.Strategy):
                 self.total_fee_usdt += fee_usdt
                 self.buy_count += 1
                 self.log(
-                    f"Buy executed: raw size={order.executed.size:.6f}, fee={fee_btc:.6f} BTC (~{fee_usdt:.2f} USDT), net={(order.executed.size - fee_btc):.6f} BTC at price {order.executed.price:.2f}"
+                    f"Buy executed: raw size={order.executed.size:.6f}, fee={fee_btc:.6f} BTC (~{fee_usdt:.2f} USDT), net={(order.executed.size - fee_btc):.6f} BTC at price {order.executed.price:.2f}. 買單總次數: {self.buy_count}"
                 )
             elif order.issell():
                 trade_value = order.executed.price * order.executed.size
@@ -166,15 +184,22 @@ class SmaCoreStrategy(bt.Strategy):
                 self.total_fee_usdt += fee_usdt
                 self.sell_count += 1
                 self.log(
-                    f"Sell executed: size={order.executed.size:.6f} at price {order.executed.price:.2f}, trade value={trade_value:.2f} USDT, fee={fee_usdt:.2f} USDT"
+                    f"Sell executed: size={order.executed.size:.6f} at price {order.executed.price:.2f}, trade value={trade_value:.2f} USDT, fee={fee_usdt:.2f} USDT. 賣單總次數: {self.sell_count}"
                 )
             self.order = None
 
-            # 印出目前總資產 (現金+持倉換算成 USDT)
-            total_assets = self.broker.getvalue()
-            self.log(f"Total assets: {total_assets:.2f} USDT")
+            # 印出目前總資產明細 (現金 + 持倉換算成 USDT)
+            current_price = order.executed.price
+            position = self.getposition(self.data)
+            btc_qty = position.size if position else 0.0
+            cash = self.broker.getcash()
+            btc_value = btc_qty * current_price
+            total_assets = cash + btc_value
+            self.log("目前手上幣對數量及其市值:")
+            self.log(f"BTC: {btc_qty:.6f} BTC（價值 ${btc_value:.2f} USDT）")
+            self.log(f"USDT: {cash:.6f} USDT")
+            self.log(f"BTC-USDT 總價值 ${total_assets:.2f} USDT")
 
-            # 計算資產變化：目前總資產減去初始資金
             asset_change = total_assets - self.initial_capital
             change_str = (
                 f"+{asset_change:.2f}" if asset_change >= 0 else f"{asset_change:.2f}"
@@ -184,6 +209,74 @@ class SmaCoreStrategy(bt.Strategy):
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
             self.log("Order canceled/margin/rejected")
             self.order = None
+
+    def notify_trade(self, trade):
+        """
+        當交易平倉時呼叫，更新累計實現盈虧，並印出策略累積盈虧。
+        """
+        if trade.isclosed:
+            self.cum_pnl += trade.pnl
+            self.log(
+                f"📊 已實現損益（策略本身盈虧）: {self.cum_pnl:.2f} USDT", to_print=True
+            )
+
+    def stop(self):
+        """
+        回測結束時記錄最終策略結果。
+        """
+        result = self.get_result()
+        self.log("**************************************************")
+        self.log("交易結束，統計結果如下：")
+        self.log(f"start_time: {result['start_time']}")
+        self.log(f"end_time: {result['end_time']}")
+        self.log(f"initial_capital: {result['initial_capital']}")
+        self.log(f"final_value: {result['final_value']:.2f}")
+        self.log(f"profit: {result['profit']:.2f}")
+        self.log(f"profit_rate: {result['profit_rate']:.2f}%")
+        self.log(f"buy_count: {result['buy_count']}")
+        self.log(f"sell_count: {result['sell_count']}")
+        self.log(f"total_fee_usd: {result['total_fee_usdt']:.2f}")
+        self.log(f"buy_pct: {result['buy_pct']}")
+        self.log(f"short_period: {result['short_period']}")
+        self.log(f"long_period: {result['long_period']}")
+
+    def get_result(self):
+        """
+        返回策略回測結束時的統計資訊，包括：
+          - 回測資料開始與結束時間
+          - 初始資金、最終資產、獲利及獲利率
+          - 買入次數、賣出次數、總手續費
+          - 策略參數設定
+        """
+        if hasattr(self.data, "_dataname") and isinstance(
+            self.data._dataname, pd.DataFrame
+        ):
+            start_time = self.data._dataname.index[0]
+            end_time = self.data._dataname.index[-1]
+            start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+            end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            start_time_str = None
+            end_time_str = None
+
+        final_value = self.broker.getvalue()
+        profit = final_value - self.initial_capital
+        profit_rate = (profit / self.initial_capital) * 100.0
+
+        return {
+            "start_time": start_time_str,
+            "end_time": end_time_str,
+            "initial_capital": self.initial_capital,
+            "final_value": final_value,
+            "profit": profit,
+            "profit_rate": profit_rate,
+            "buy_count": self.buy_count,
+            "sell_count": self.sell_count,
+            "total_fee_usdt": self.total_fee_usdt,
+            "buy_pct": self.p.buy_pct,
+            "short_period": self.p.short_period,
+            "long_period": self.p.long_period,
+        }
 
     def log(self, txt, dt=None, to_print=True):
         """
