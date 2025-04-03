@@ -52,7 +52,14 @@ class ReversalCoreStrategy(bt.Strategy):
     )
 
     def __init__(self):
-        # (略：原有資料檢查與 reversal_core 初始化)
+        # 檢查資料格式，確保索引為 datetime 型態
+        if hasattr(self.data, "_dataname") and isinstance(
+            self.data._dataname, pd.DataFrame
+        ):
+            if not pd.api.types.is_datetime64_any_dtype(self.data._dataname.index):
+                self.data._dataname.index = pd.to_datetime(self.data._dataname.index)
+
+        # 初始化 Reversal 策略核心 (注意 ReversalCore 的 __init__ 必須正確命名)
         self.reversal_core = ReversalCore(
             self.p.consecutive_bear_threshold,
             self.p.take_profit_pct,
@@ -67,8 +74,10 @@ class ReversalCoreStrategy(bt.Strategy):
         self.total_fee_usdt = 0.0
         self.cum_pnl = 0.0
 
-        # 新增：用來判斷是否已 log 過門檻訊息
+        # 用來判斷是否已 log 過門檻訊息
         self.threshold_logged = False
+        # 用來判斷是否已 log 觸發狀態後的第一根陽線
+        self.first_bull_logged = False
 
     def start(self):
         """回測啟動時記錄初始狀態"""
@@ -88,17 +97,24 @@ class ReversalCoreStrategy(bt.Strategy):
     def next(self):
         """
         每根 K 線到來時執行：
-          1. 記錄該根 K 線的 OHLCV 資料。
+          1. 記錄該根 K 線的 OHLCV 資料（並於 volume 後附上該根 K 線為陰線或陽線）。
           2. 將當前 K 線資料組合為字典傳入 reversal_core.update() 取得訊號 ("buy" 或 "sell")。
           3. 根據訊號及當前持倉狀態判斷是否下市價單。
         """
-        # 記錄當前 K 線的 OHLCV 資料
+        # 判斷該根 K 線為陰線或陽線
+        candle_type = "平盤"
+        if self.data.close[0] < self.data.open[0]:
+            candle_type = "陰線"
+        elif self.data.close[0] > self.data.open[0]:
+            candle_type = "陽線"
+
+        # 記錄當前 K 線的 OHLCV 資料 (並加上 candle_type)
         ohlcv_str = (
             f"OHLCV => Open: {self.data.open[0]:.2f}, "
             f"High: {self.data.high[0]:.2f}, "
             f"Low: {self.data.low[0]:.2f}, "
             f"Close: {self.data.close[0]:.2f}, "
-            f"Volume: {self.data.volume[0]}"
+            f"Volume: {self.data.volume[0]} [{candle_type}]"
         )
         self.log(ohlcv_str, to_print=False)
 
@@ -112,9 +128,10 @@ class ReversalCoreStrategy(bt.Strategy):
         # 取得 reversal_core 所產生的交易訊號
         signal = self.reversal_core.update(candle)
 
-        # 當不在觸發狀態時，重置 threshold_logged 旗標
+        # 當不在觸發狀態時，重置 threshold_logged 與 first_bull_logged 旗標
         if not self.reversal_core.triggered:
             self.threshold_logged = False
+            self.first_bull_logged = False
 
         # 如果達到門檻且尚未 log，則記錄訊息
         if self.reversal_core.triggered and not self.threshold_logged:
@@ -136,9 +153,16 @@ class ReversalCoreStrategy(bt.Strategy):
                 if available_cash >= buy_amount:
                     order_size = buy_amount / current_price
                     self.order = self.buy(size=order_size, exectype=bt.Order.Market)
+                    # log 下單時附上止盈與止損價訊息
                     self.log(
-                        f"Buy order placed: size={order_size:.6f} at price {current_price:.2f} using {buy_amount:.2f} USDT"
+                        f"Buy order placed: size={order_size:.6f} at price {current_price:.2f} using {buy_amount:.2f} USDT. "
+                        f"止盈價(+{self.p.take_profit_pct}%): {self.reversal_core.take_profit_price:.2f}, "
+                        f"止損價({self.p.stop_loss_pct}%): {self.reversal_core.stop_loss_price:.2f}"
                     )
+                    # 若還未 log 過第一根陽線，則 log 該訊息
+                    if not self.first_bull_logged:
+                        self.log("此為觸發狀態後的第一根陽線")
+                        self.first_bull_logged = True
                 else:
                     self.log(
                         f"Buy signal received, but available cash {available_cash:.2f} is less than required {buy_amount:.2f}"
@@ -357,23 +381,24 @@ if __name__ == "__main__":
 
     # ============= Parameters Start Here ====================
     SYMBOL = "BTC/USDT"
-    TIMEFRAME = "1s"
-    START_TIME = "2025-03-01 00:00:00"
+    TIMEFRAME = "1m"
+    START_TIME = "2025-04-01 00:00:00"
     END_TIME = "2025-04-14 23:59:59"
     INIT_CAPITAL = 1000
-    CONSECUTIVE_BEAR_THRESHOLD = 7
-    TAKE_PROFIT_PCT = 5
-    STOP_LOSS_PCT = -4
-    BUY_PERCENTAGE = 0.98
+    # Single
+    CONSECUTIVE_BEAR_THRESHOLD = 5
+    TAKE_PROFIT_PCT = 6
+    STOP_LOSS_PCT = -1
+    BUY_PERCENTAGE = 0.1
     # Multi
     CONSECUTIVE_BEAR_THRESHOLDS = [2, 3, 4, 5, 6, 7]
     TAKE_PROFIT_PCTS = [1, 2, 3, 4, 5, 6]
     STOP_LOSS_PCTS = [-1, -2, -3, -4, -5, -6]
     # Mode
-    RUN_SINGLE_BT = False
-    RUN_MULTI_BT = True
     RUN_SINGLE_BT = True
     RUN_MULTI_BT = False
+    # RUN_SINGLE_BT = False
+    # RUN_MULTI_BT = True
     # ============= Parameters Stop Here ====================
 
     # 設定交易所參數
@@ -387,7 +412,7 @@ if __name__ == "__main__":
     data_loader = DataLoader()
     df = data_loader.load_data(
         exchange_config=exchange_config,
-        destination="csv",
+        destination="ccxt",
         start_time=START_TIME,
         end_time=END_TIME,
     )
@@ -407,11 +432,7 @@ if __name__ == "__main__":
     tablename = DataLoader.generate_table_name(exchange_config)
     print(f"使用的資料表名稱: {tablename}")
 
-    # -------------------------------------------------------------------
-    # 回測執行 - 可選擇單次回測或批次回測
-    # -------------------------------------------------------------------    # 執行單次回測
-
-    # 若需要單次回測，請將以下 if 條件設為 True
+    # 執行單次回測
     if RUN_SINGLE_BT:
         run_strategy(
             df,
