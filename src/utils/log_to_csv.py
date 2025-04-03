@@ -32,28 +32,30 @@ with open(log_file, "r", encoding="utf-8") as f:
             if last_timestamp is not None and current_timestamp < last_timestamp:
                 continue
 
-            # 規則2：如果時間間隔超過 1 秒，補上中間缺失的秒數
+            # 規則2：如果時間間隔超過 1 秒，補上中間缺失的秒數，
+            # 補上的 tick 的所有欄位都以上一筆 ticker 的 close 值為準
             if last_timestamp is not None:
                 gap = int((current_timestamp - last_timestamp).total_seconds())
                 if gap > 1:
-                    # 補上從上一筆後一秒到當前前一秒的所有缺失秒數
                     for i in range(1, gap):
                         missing_timestamp = last_timestamp + timedelta(seconds=i)
                         data.append(
                             {
                                 "datetime": missing_timestamp,
-                                "open": last_ticker["open"],
-                                "high": last_ticker["high"],
-                                "low": last_ticker["low"],
+                                "open": last_ticker["close"],
+                                "high": last_ticker["close"],
+                                "low": last_ticker["close"],
                                 "close": last_ticker["close"],
                                 "volume": 0,
                             }
                         )
 
-            # 將當前 ticker 加入資料，並更新 last_timestamp 與 last_ticker
+            # 將當前 ticker 加入資料：
+            # open 採用前一筆 ticker 的 close (若存在)，否則使用當前市價，
+            # h, l, c 都使用當前市價
             current_ticker = {
                 "datetime": current_timestamp,
-                "open": price,
+                "open": last_ticker["close"] if last_ticker is not None else price,
                 "high": price,
                 "low": price,
                 "close": price,

@@ -43,14 +43,14 @@ if __name__ == "__main__":
     # 設定交易所參數 exchange_config
     exchange_config = {
         "exchange_id": "binance",
-        "symbol": "DOGE/USDT",
-        "timeframe": "1m",
+        "symbol": "BTC/USDT",
+        "timeframe": "1s",
     }
 
     # 下載資料：設定起始與結束時間
     df = data_loader.load_data(
         exchange_config=exchange_config,
-        destination="ccxt",
+        destination="csv",
         start_time="2025-01-01 00:00:00",
         end_time="2025-04-08 15:59:59",
     )

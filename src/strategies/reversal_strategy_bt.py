@@ -1,38 +1,24 @@
+#!/usr/bin/env python3
 """
-檔案名稱: sma_strategy_bt.py
+檔案名稱: reversal_strategy_bt.py
 
 說明:
-  此程式為一個策略回測程式，同時也具備主程式功能，可以直接執行進行回測。
-  程式流程如下：
-    1. 利用 DataLoader 從指定資料來源（例如透過 CCXT）下載歷史 K 線資料，
-       並將資料轉換成適合 Backtrader 使用的格式（將 "datetime" 欄位轉換為 datetime 型態並設為索引）。
-    2. 建立 Backtrader 的資料 Feed 與策略 (SmaCoreStrategy)，並依照設定的參數執行回測。
-    3. 回測完成後，透過策略物件提供的 get_result 方法取得績效報告，
-       亦可選擇繪製圖表或儲存回測報告。
+  此程式為 Reversal 策略回測程式，模仿 sma_strategy_bt.py 結構，
+  使用 reversal_core 模組提供的核心邏輯來判斷交易訊號，
+  並以 Backtrader 進行回測。策略流程為：
+    1. 累計連續陰線（收盤價低於開盤價）達到設定門檻後，
+       進入觸發狀態等待第一根陽線 (收盤價高於開盤價) 出現，
+       進而以市價買入並設定止盈/止損。
+    2. 持倉期間，若價格觸及止盈或止損點則平倉，並重置狀態。
 
 使用方法:
-  1. 確認已安裝所需第三方套件（例如 backtrader, pandas, okx-api 等），
-     並且確保同一目錄下有 sma_core 模組及 utils/data_loader.py（用於下載歷史資料）。
-  2. 根據需求修改參數設定：
-       - exchange_config、start_time 與 end_time 決定歷史資料來源與區間。
-       - 回測參數包括 init_capital（初始資金）、short_period、long_period、buy_pct 等。
-  3. 執行本程式：
-         python sma_strategy_bt.py
-  4. 程式執行後將會進行單次或批次回測（可依 __main__ 區塊中設定切換），
-     並輸出回測結果與報告檔案（CSV 格式）。
-
-注意事項:
-  - 此程式僅供策略回測與測試使用，回測結果僅供參考，勿直接應用於正式交易。
-  - 請確認歷史資料的正確性與完整性，並根據回測需求調整策略參數。
-  - 若使用批次回測，回測完成後會將結果依 profit_rate 由大到小排序並儲存報告至指定資料夾。
-
-版本: 1.0
-建立日期: 2025-03-21
-作者: [ChatGPT o3-mini-high]
+  1. 確保 reversal_core.py 與此檔案位於同一目錄或可被 import 的路徑下。
+  2. 根據需求修改回測參數與資料來源設定。
+  3. 執行本程式 (例如 python reversal_strategy_bt.py) 即可開始回測。
 """
 
 import backtrader as bt
-from sma_core import SmaCore  # 引入核心 SMA 計算邏輯
+from reversal_core import ReversalCore  # 引入 Reversal 核心策略邏輯
 import pandas as pd
 import logging
 import os
@@ -41,11 +27,11 @@ import time
 # -----------------------
 # 設定 logger
 # -----------------------
-logger = logging.getLogger("SmaCoreStrategyLogger")
+logger = logging.getLogger("ReversalCoreStrategyLogger")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    log_filename = f"results/log/sma_strategy_bt_{timestamp}.log"
+    log_filename = f"results/log/reversal_strategy_bt_{timestamp}.log"
     fh = logging.FileHandler(log_filename, mode="a", encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
@@ -55,51 +41,39 @@ if not logger.handlers:
     logger.addHandler(fh)
 
 
-class SmaCoreStrategy(bt.Strategy):
+class ReversalCoreStrategy(bt.Strategy):
     params = (
-        ("short_period", 5),  # 短期 SMA 週期設定
-        ("long_period", 20),  # 長期 SMA 週期設定
-        ("buy_pct", 0.3),  # 每次買入使用的初始資金比例 (例如 0.3 表示 30%)
-        ("taker_fee_rate", 0.001),  # 買入時手續費率 (吃單，0.1%)
-        ("maker_fee_rate", 0.0008),  # 賣出時手續費率 (掛單，0.08%)
+        ("consecutive_bear_threshold", 3),  # 連續陰線門檻 (例如 3 根)
+        ("take_profit_pct", 3),  # 止盈百分比 (例如 +3%)
+        ("stop_loss_pct", -2),  # 止損百分比 (例如 -2%)
+        ("buy_pct", 0.3),  # 每次買入所使用初始資金比例 (例如 0.3 表示 30%)
+        ("taker_fee_rate", 0.001),  # 買入手續費率 (吃單，0.1%)
+        ("maker_fee_rate", 0.0008),  # 賣出手續費率 (掛單，0.08%)
     )
 
     def __init__(self):
-        # 如果傳入的資料是 pandas DataFrame，檢查其索引是否為 datetime 類型
-        if hasattr(self.data, "_dataname") and isinstance(
-            self.data._dataname, pd.DataFrame
-        ):
-            if not pd.api.types.is_datetime64_any_dtype(self.data._dataname.index):
-                self.data._dataname.index = pd.to_datetime(self.data._dataname.index)
-
-        # 初始化核心 SMA 策略邏輯，產生買/賣訊號
-        self.sma_core = SmaCore(self.p.short_period, self.p.long_period)
+        # (略：原有資料檢查與 reversal_core 初始化)
+        self.reversal_core = ReversalCore(
+            self.p.consecutive_bear_threshold,
+            self.p.take_profit_pct,
+            self.p.stop_loss_pct,
+        )
         self.order = None
 
-        # 記錄策略啟動時的初始資金
+        # 記錄初始資金與統計數據
         self.initial_capital = self.broker.getcash()
-
-        # 初始化累計變數：買入次數、賣出次數、累計手續費（以 USDT 計算）與累計實現盈虧
         self.buy_count = 0
         self.sell_count = 0
         self.total_fee_usdt = 0.0
-        self.cum_pnl = 0.0  # 累計已實現損益
+        self.cum_pnl = 0.0
 
-        # 加入短期與長期 SMA 指標線
-        self.sma_short_indicator = bt.indicators.SimpleMovingAverage(
-            self.data.close, period=self.p.short_period, plotname="SMA Short"
-        )
-        self.sma_long_indicator = bt.indicators.SimpleMovingAverage(
-            self.data.close, period=self.p.long_period, plotname="SMA Long"
-        )
+        # 新增：用來判斷是否已 log 過門檻訊息
+        self.threshold_logged = False
 
     def start(self):
-        """
-        回測啟動時記錄初始狀態
-        """
+        """回測啟動時記錄初始狀態"""
         self.log("啟動回測交易")
         self.log("交易幣對: BTC-USDT")
-        # 取得初始現金與持倉（預設空倉）
         cash = self.broker.getcash()
         position = self.getposition(self.data)
         btc_qty = position.size if position else 0.0
@@ -113,13 +87,12 @@ class SmaCoreStrategy(bt.Strategy):
 
     def next(self):
         """
-        每根新的 K 線到來時呼叫：
-          1. 寫入該根 K 線的 OHLCV 資料至 log。
-          2. 取得當前收盤價，並利用核心 SMA 模組更新價格，獲得交易訊號 ("buy" 或 "sell")。
-          3. 根據訊號判斷是否下單：
-             - 買入：需空倉且現金足夠（至少有初始資金 * buy_pct）。
-             - 賣出：需持有部位。
+        每根 K 線到來時執行：
+          1. 記錄該根 K 線的 OHLCV 資料。
+          2. 將當前 K 線資料組合為字典傳入 reversal_core.update() 取得訊號 ("buy" 或 "sell")。
+          3. 根據訊號及當前持倉狀態判斷是否下市價單。
         """
+        # 記錄當前 K 線的 OHLCV 資料
         ohlcv_str = (
             f"OHLCV => Open: {self.data.open[0]:.2f}, "
             f"High: {self.data.high[0]:.2f}, "
@@ -129,13 +102,33 @@ class SmaCoreStrategy(bt.Strategy):
         )
         self.log(ohlcv_str, to_print=False)
 
-        current_price = self.data.close[0]
-        signal = self.sma_core.update(current_price)
+        # 組合當前 K 線資料成字典格式 (供 reversal_core 使用)
+        candle = {
+            "open": self.data.open[0],
+            "high": self.data.high[0],
+            "low": self.data.low[0],
+            "close": self.data.close[0],
+        }
+        # 取得 reversal_core 所產生的交易訊號
+        signal = self.reversal_core.update(candle)
 
+        # 當不在觸發狀態時，重置 threshold_logged 旗標
+        if not self.reversal_core.triggered:
+            self.threshold_logged = False
+
+        # 如果達到門檻且尚未 log，則記錄訊息
+        if self.reversal_core.triggered and not self.threshold_logged:
+            self.log(
+                f"連續{self.reversal_core.bear_count}根陰線 -> 達到門檻，進入觸發狀態，等待第一根陽線"
+            )
+            self.threshold_logged = True
+
+        # 若尚有未處理的訂單則不再下單
         if self.order:
             return
 
-        # 處理買入訊號
+        current_price = self.data.close[0]
+        # 處理買入訊號：僅在空倉且現金足夠時執行
         if signal == "buy":
             if not self.position:
                 available_cash = self.broker.getcash()
@@ -155,7 +148,7 @@ class SmaCoreStrategy(bt.Strategy):
                     "Buy signal received, but already in position. No action taken."
                 )
 
-        # 處理賣出訊號
+        # 處理賣出訊號：僅在持有部位時執行
         elif signal == "sell":
             if self.position:
                 self.order = self.close(exectype=bt.Order.Market)
@@ -165,9 +158,9 @@ class SmaCoreStrategy(bt.Strategy):
 
     def notify_order(self, order):
         """
-        當訂單狀態改變時呼叫：
-          - 若訂單成交，計算手續費、更新統計數據，並印出目前總資產、買賣次數與資產變化。
-          - 若訂單取消或失敗，則記錄相應訊息。
+        當訂單狀態變化時呼叫：
+          - 若訂單成交，計算手續費、更新交易次數及記錄執行細節。
+          - 並印出目前總資產狀態與累計盈虧。
         """
         if order.status in [order.Completed]:
             if order.isbuy():
@@ -188,7 +181,7 @@ class SmaCoreStrategy(bt.Strategy):
                 )
             self.order = None
 
-            # 印出目前總資產明細 (現金 + 持倉換算成 USDT)
+            # 印出目前總資產狀態
             current_price = order.executed.price
             position = self.getposition(self.data)
             btc_qty = position.size if position else 0.0
@@ -236,9 +229,9 @@ class SmaCoreStrategy(bt.Strategy):
         self.log(f"buy_count: {result['buy_count']}")
         self.log(f"sell_count: {result['sell_count']}")
         self.log(f"total_fee_usd: {result['total_fee_usdt']:.2f}")
-        self.log(f"buy_pct: {result['buy_pct']}")
-        self.log(f"short_period: {result['short_period']}")
-        self.log(f"long_period: {result['long_period']}")
+        self.log(f"consecutive_bear_threshold: {result['consecutive_bear_threshold']}")
+        self.log(f"take_profit_pct: {result['take_profit_pct']}")
+        self.log(f"stop_loss_pct: {result['stop_loss_pct']}")
 
     def get_result(self):
         """
@@ -273,9 +266,9 @@ class SmaCoreStrategy(bt.Strategy):
             "buy_count": self.buy_count,
             "sell_count": self.sell_count,
             "total_fee_usdt": self.total_fee_usdt,
-            "buy_pct": self.p.buy_pct,
-            "short_period": self.p.short_period,
-            "long_period": self.p.long_period,
+            "consecutive_bear_threshold": self.p.consecutive_bear_threshold,
+            "take_profit_pct": self.p.take_profit_pct,
+            "stop_loss_pct": self.p.stop_loss_pct,
         }
 
     def log(self, txt, dt=None, to_print=True):
@@ -293,47 +286,15 @@ class SmaCoreStrategy(bt.Strategy):
             print(message)
         logger.info(message)
 
-    def get_result(self):
-        """
-        返回策略回測結束時的統計資訊，包括：
-          - 回測資料開始與結束時間
-          - 初始資金、最終資產、獲利及獲利率
-          - 買入次數、賣出次數、總手續費
-          - 策略參數設定
-        """
-        if hasattr(self.data, "_dataname") and isinstance(
-            self.data._dataname, pd.DataFrame
-        ):
-            start_time = self.data._dataname.index[0]
-            end_time = self.data._dataname.index[-1]
-            start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-            end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            start_time_str = None
-            end_time_str = None
-
-        final_value = self.broker.getvalue()
-        profit = final_value - self.initial_capital
-        profit_rate = (profit / self.initial_capital) * 100.0
-
-        return {
-            "start_time": start_time_str,
-            "end_time": end_time_str,
-            "initial_capital": self.initial_capital,
-            "final_value": final_value,
-            "profit": profit,
-            "profit_rate": profit_rate,
-            "buy_count": self.buy_count,
-            "sell_count": self.sell_count,
-            "total_fee_usdt": self.total_fee_usdt,
-            "buy_pct": self.p.buy_pct,
-            "short_period": self.p.short_period,
-            "long_period": self.p.long_period,
-        }
-
 
 def run_strategy(
-    data, init_capital=10000, short_period=5, long_period=20, buy_pct=0.3, plot=False
+    data,
+    init_capital=10000,
+    consecutive_bear_threshold=3,
+    take_profit_pct=3,
+    stop_loss_pct=-2,
+    buy_pct=0.3,
+    plot=False,
 ):
     """
     建立 Backtrader 引擎，設定資料與策略，執行回測並返回策略績效報告。
@@ -341,8 +302,9 @@ def run_strategy(
     參數:
       data (pd.DataFrame): 歷史 K 線資料，必須包含 'datetime', 'open', 'high', 'low', 'close', 'volume'
       init_capital (float): 初始資金，預設 10000 USDT
-      short_period (int): 短期 SMA 週期
-      long_period (int): 長期 SMA 週期
+      consecutive_bear_threshold (int): 連續陰線門檻
+      take_profit_pct (float): 止盈百分比
+      stop_loss_pct (float): 止損百分比
       buy_pct (float): 每次買入所使用的初始資金比例
       plot (bool): 是否繪製回測圖表
 
@@ -350,25 +312,22 @@ def run_strategy(
       dict: 策略回測的績效報告
     """
     datafeed = bt.feeds.PandasData(dataname=data)
-
     cerebro = bt.Cerebro()
     cerebro.adddata(datafeed)
     cerebro.addstrategy(
-        SmaCoreStrategy,
-        short_period=short_period,
-        long_period=long_period,
+        ReversalCoreStrategy,
+        consecutive_bear_threshold=consecutive_bear_threshold,
+        take_profit_pct=take_profit_pct,
+        stop_loss_pct=stop_loss_pct,
         buy_pct=buy_pct,
     )
     cerebro.broker.setcash(init_capital)
-
     results = cerebro.run()
     strategy_instance = results[0]
     result = strategy_instance.get_result()
-
     print("策略結果：", result)
     if plot:
         cerebro.plot()
-
     return result
 
 
@@ -388,34 +347,33 @@ def save_report(dir_path: str, filename: str, df: pd.DataFrame):
     print(f"檔案已儲存至 {filepath}")
 
 
-# -------------------------------------------------------------------
-# __main__ 區塊 - 回測主程式 (可直接執行此檔案進行回測)
-# -------------------------------------------------------------------
 if __name__ == "__main__":
     # 載入歷史資料
     import sys
     import os
 
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    from utils.data_loader import DataLoader  # 確保 utils/data_loader.py 可用
+    from utils.data_loader import DataLoader
 
     # ============= Parameters Start Here ====================
-    # Dataloader
     SYMBOL = "BTC/USDT"
     TIMEFRAME = "1s"
-    START_TIME = "2025-01-01 00:00:00"
+    START_TIME = "2025-03-01 00:00:00"
     END_TIME = "2025-04-14 23:59:59"
-    # SMA Backtest
     INIT_CAPITAL = 1000
-    SHORT_PERIOD = 10
-    LONG_PERIOD = 120
-    BUY_PERCENTATGE = 0.1
+    CONSECUTIVE_BEAR_THRESHOLD = 7
+    TAKE_PROFIT_PCT = 5
+    STOP_LOSS_PCT = -4
+    BUY_PERCENTAGE = 0.98
     # Multi
-    SHORTS = [5, 10, 20, 60, 120, 240]
-    LONGS = [5, 10, 20, 60, 120, 240]
+    CONSECUTIVE_BEAR_THRESHOLDS = [2, 3, 4, 5, 6, 7]
+    TAKE_PROFIT_PCTS = [1, 2, 3, 4, 5, 6]
+    STOP_LOSS_PCTS = [-1, -2, -3, -4, -5, -6]
     # Mode
     RUN_SINGLE_BT = False
     RUN_MULTI_BT = True
+    RUN_SINGLE_BT = True
+    RUN_MULTI_BT = False
     # ============= Parameters Stop Here ====================
 
     # 設定交易所參數
@@ -446,41 +404,42 @@ if __name__ == "__main__":
     else:
         raise KeyError("資料中必須包含 'datetime' 欄位")
 
-    # 產生統一的資料表名稱
     tablename = DataLoader.generate_table_name(exchange_config)
     print(f"使用的資料表名稱: {tablename}")
 
     # -------------------------------------------------------------------
     # 回測執行 - 可選擇單次回測或批次回測
-    # -------------------------------------------------------------------
+    # -------------------------------------------------------------------    # 執行單次回測
 
     # 若需要單次回測，請將以下 if 條件設為 True
     if RUN_SINGLE_BT:
         run_strategy(
             df,
             init_capital=INIT_CAPITAL,
-            short_period=SHORT_PERIOD,
-            long_period=LONG_PERIOD,
-            buy_pct=BUY_PERCENTATGE,
+            consecutive_bear_threshold=CONSECUTIVE_BEAR_THRESHOLD,
+            take_profit_pct=TAKE_PROFIT_PCT,
+            stop_loss_pct=STOP_LOSS_PCT,
+            buy_pct=BUY_PERCENTAGE,
             plot=True,
         )
 
     # 批次回測示範：遍歷不同的 SMA 參數組合
     if RUN_MULTI_BT:
         results = []
-        for short in SHORTS:
-            for long in LONGS:
-                if short < long:
+        for threshold in CONSECUTIVE_BEAR_THRESHOLDS:
+            for profit in TAKE_PROFIT_PCTS:
+                for loss in STOP_LOSS_PCTS:
                     result = run_strategy(
                         df,
                         init_capital=INIT_CAPITAL,
-                        short_period=short,
-                        long_period=long,
-                        buy_pct=BUY_PERCENTATGE,
+                        consecutive_bear_threshold=threshold,
+                        take_profit_pct=profit,
+                        stop_loss_pct=loss,
+                        buy_pct=BUY_PERCENTAGE,
                         plot=False,
                     )
                     results.append(result)
         df_result = pd.DataFrame(results)
         df_result_sorted = df_result.sort_values(by="profit_rate", ascending=False)
         print(df_result_sorted)
-        save_report("results/report", f"sma_{tablename}", df_result_sorted)
+        save_report("results/report", f"reversal_{tablename}", df_result_sorted)
