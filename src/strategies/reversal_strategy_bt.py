@@ -97,9 +97,9 @@ class ReversalCoreStrategy(bt.Strategy):
     def next(self):
         """
         每根 K 線到來時執行：
-          1. 記錄該根 K 線的 OHLCV 資料（並於 volume 後附上該根 K 線為陰線或陽線）。
-          2. 將當前 K 線資料組合為字典傳入 reversal_core.update() 取得訊號 ("buy" 或 "sell")。
-          3. 根據訊號及當前持倉狀態判斷是否下市價單。
+          1. 記錄該根 K 線的 OHLCV 資料（並於 Volume 後附上該根 K 線為陰線或陽線）。
+          2. 組合 K 線資料傳入 reversal_core.update() 取得訊號 ("buy" 或 "sell")。
+          3. 根據訊號決定下單，同時在賣出時 log 是止盈單還是止損單。
         """
         # 判斷該根 K 線為陰線或陽線
         candle_type = "平盤"
@@ -108,7 +108,6 @@ class ReversalCoreStrategy(bt.Strategy):
         elif self.data.close[0] > self.data.open[0]:
             candle_type = "陽線"
 
-        # 記錄當前 K 線的 OHLCV 資料 (並加上 candle_type)
         ohlcv_str = (
             f"OHLCV => Open: {self.data.open[0]:.2f}, "
             f"High: {self.data.high[0]:.2f}, "
@@ -118,34 +117,31 @@ class ReversalCoreStrategy(bt.Strategy):
         )
         self.log(ohlcv_str, to_print=False)
 
-        # 組合當前 K 線資料成字典格式 (供 reversal_core 使用)
+        # 組合當前 K 線資料
         candle = {
             "open": self.data.open[0],
             "high": self.data.high[0],
             "low": self.data.low[0],
             "close": self.data.close[0],
         }
-        # 取得 reversal_core 所產生的交易訊號
         signal = self.reversal_core.update(candle)
 
-        # 當不在觸發狀態時，重置 threshold_logged 與 first_bull_logged 旗標
+        # 當不在觸發狀態時，重置旗標
         if not self.reversal_core.triggered:
             self.threshold_logged = False
             self.first_bull_logged = False
 
-        # 如果達到門檻且尚未 log，則記錄訊息
         if self.reversal_core.triggered and not self.threshold_logged:
             self.log(
                 f"連續{self.reversal_core.bear_count}根陰線 -> 達到門檻，進入觸發狀態，等待第一根陽線"
             )
             self.threshold_logged = True
 
-        # 若尚有未處理的訂單則不再下單
         if self.order:
             return
 
         current_price = self.data.close[0]
-        # 處理買入訊號：僅在空倉且現金足夠時執行
+
         if signal == "buy":
             if not self.position:
                 available_cash = self.broker.getcash()
@@ -153,13 +149,15 @@ class ReversalCoreStrategy(bt.Strategy):
                 if available_cash >= buy_amount:
                     order_size = buy_amount / current_price
                     self.order = self.buy(size=order_size, exectype=bt.Order.Market)
-                    # log 下單時附上止盈與止損價訊息
+                    # 保存進場及止盈/止損價格
+                    self.last_buy_price = current_price
+                    self.last_take_profit_price = self.reversal_core.take_profit_price
+                    self.last_stop_loss_price = self.reversal_core.stop_loss_price
                     self.log(
                         f"Buy order placed: size={order_size:.6f} at price {current_price:.2f} using {buy_amount:.2f} USDT. "
-                        f"止盈價(+{self.p.take_profit_pct}%): {self.reversal_core.take_profit_price:.2f}, "
-                        f"止損價({self.p.stop_loss_pct}%): {self.reversal_core.stop_loss_price:.2f}"
+                        f"止盈價(+{self.p.take_profit_pct}%): {self.last_take_profit_price:.2f}, "
+                        f"止損價({self.p.stop_loss_pct}%): {self.last_stop_loss_price:.2f}"
                     )
-                    # 若還未 log 過第一根陽線，則 log 該訊息
                     if not self.first_bull_logged:
                         self.log("此為觸發狀態後的第一根陽線")
                         self.first_bull_logged = True
@@ -172,9 +170,16 @@ class ReversalCoreStrategy(bt.Strategy):
                     "Buy signal received, but already in position. No action taken."
                 )
 
-        # 處理賣出訊號：僅在持有部位時執行
         elif signal == "sell":
             if self.position:
+                # 判斷當前K線觸發的賣出類型
+                if self.data.high[0] >= self.last_take_profit_price:
+                    order_type = "止盈單"
+                elif self.data.low[0] <= self.last_stop_loss_price:
+                    order_type = "止損單"
+                else:
+                    order_type = "未知賣單"
+                self.log(f"Triggered sell order: {order_type}")
                 self.order = self.close(exectype=bt.Order.Market)
                 self.log(f"Sell order placed at price {current_price:.2f}")
             else:
@@ -383,7 +388,7 @@ if __name__ == "__main__":
     SYMBOL = "BTC/USDT"
     TIMEFRAME = "1m"
     START_TIME = "2025-04-01 00:00:00"
-    END_TIME = "2025-04-14 23:59:59"
+    END_TIME = "2025-05-14 23:59:59"
     INIT_CAPITAL = 1000
     # Single
     CONSECUTIVE_BEAR_THRESHOLD = 5
@@ -397,8 +402,8 @@ if __name__ == "__main__":
     # Mode
     RUN_SINGLE_BT = True
     RUN_MULTI_BT = False
-    # RUN_SINGLE_BT = False
-    # RUN_MULTI_BT = True
+    RUN_SINGLE_BT = False
+    RUN_MULTI_BT = True
     # ============= Parameters Stop Here ====================
 
     # 設定交易所參數

@@ -2,6 +2,7 @@ import okx.MarketData as MarketData
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import os
+import time
 
 
 # === 將台北時間字串轉成 UTC timestamp（毫秒）===
@@ -21,8 +22,8 @@ def utc_to_taipei_str(ts_ms):
 # === 參數：你只需要填台北時間即可 ===
 INST_ID = "BTC-USDT"
 BAR_SIZE = "1s"
-START_TIME_TAIPEI = "2025-03-01 00:00:00"
-END_TIME_TAIPEI = "2025-03-03 01:00:00"
+START_TIME_TAIPEI = "2025-04-04 00:00:00"
+END_TIME_TAIPEI = "2025-04-04 00:01:00"
 
 # === 自動轉成 UTC timestamp 給 API 使用 ===
 after = taipei_to_utc_timestamp(START_TIME_TAIPEI)
@@ -43,9 +44,15 @@ while True:
 
     all_data.extend(data)
     last_ts = int(data[-1][0])
-    if last_ts >= before:
+    print(utc_to_taipei_str(last_ts))
+    # if last_ts >= before:
+    k = after - 200000
+    print(last_ts)
+    print(k)
+    if last_ts <= after - 200000:
         break
     after = last_ts + 1
+    time.sleep(0.1)
 
 # === 建立 DataFrame 並加上台北時間欄位 ===
 df = pd.DataFrame(
